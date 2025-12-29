@@ -121,6 +121,12 @@ export function YearCalendar({
     w: 0,
     h: 0,
   });
+  const [popover, setPopover] = React.useState<{
+    event: AllDayEvent | null;
+    x: number;
+    y: number;
+  }>({ event: null, x: 0, y: 0 });
+  const popoverRef = React.useRef<HTMLDivElement | null>(null);
 
   // Important for hydration: start with a deterministic server/client match,
   // then compute real columns after mount to avoid style mismatches.
@@ -157,6 +163,63 @@ export function YearCalendar({
       }
     }
   }, [gridDims.cols, gridDims.cell, year]);
+  React.useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!popover.event) return;
+      if (popoverRef.current && e.target instanceof Node) {
+        if (!popoverRef.current.contains(e.target)) {
+          setPopover({ event: null, x: 0, y: 0 });
+        }
+      } else {
+        setPopover({ event: null, x: 0, y: 0 });
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setPopover({ event: null, x: 0, y: 0 });
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [popover.event]);
+
+  function formatDisplayRange(startIsoDate: string, endIsoDate: string) {
+    const start = new Date(startIsoDate + "T00:00:00");
+    const end = new Date(endIsoDate + "T00:00:00"); // exclusive
+    const endInclusive = new Date(end.getTime() - 86400000);
+    const sameMonth =
+      start.getFullYear() === endInclusive.getFullYear() &&
+      start.getMonth() === endInclusive.getMonth();
+    const optsDay: Intl.DateTimeFormatOptions = { day: "numeric" };
+    const optsMon: Intl.DateTimeFormatOptions = { month: "short" };
+    const optsYear: Intl.DateTimeFormatOptions = { year: "numeric" };
+    if (start.toDateString() === endInclusive.toDateString()) {
+      return `${start.toLocaleString(undefined, {
+        ...optsMon,
+        ...optsDay,
+      })}, ${start.toLocaleString(undefined, optsYear)}`;
+    }
+    if (sameMonth) {
+      return `${start.toLocaleString(undefined, {
+        ...optsMon,
+        ...optsDay,
+      })}–${endInclusive.toLocaleString(
+        undefined,
+        optsDay
+      )}, ${start.toLocaleString(undefined, optsYear)}`;
+    }
+    const left = `${start.toLocaleString(undefined, {
+      ...optsMon,
+      ...optsDay,
+    })}, ${start.toLocaleString(undefined, optsYear)}`;
+    const right = `${endInclusive.toLocaleString(undefined, {
+      ...optsMon,
+      ...optsDay,
+    })}, ${endInclusive.toLocaleString(undefined, optsYear)}`;
+    return `${left} – ${right}`;
+  }
 
   return (
     <div className="h-full w-full overflow-hidden">
@@ -247,7 +310,17 @@ export function YearCalendar({
                       top,
                       width,
                     }}
-                    className="px-1"
+                    className="px-1 pointer-events-auto"
+                    onClick={(e) => {
+                      const rect = (
+                        e.currentTarget as HTMLDivElement
+                      ).getBoundingClientRect();
+                      setPopover({
+                        event: ev,
+                        x: rect.left + rect.width / 2,
+                        y: rect.bottom + 8,
+                      });
+                    }}
                   >
                     <div
                       className="truncate rounded-sm px-1 py-0.5 text-[10px] shadow-sm"
@@ -267,6 +340,24 @@ export function YearCalendar({
           }, [events, dayIndexByKey, gridDims.cols, cellSizePx])}
         </div>
       </div>
+      {popover.event && (
+        <div
+          ref={popoverRef}
+          className="fixed z-50 w-72 max-w-[90vw] rounded-md border bg-card shadow-lg"
+          style={{
+            top: popover.y,
+            left: popover.x,
+            transform: "translateX(-50%)",
+          }}
+          role="dialog"
+          aria-label="Event details"
+        >
+          <div className="px-3 py-2 font-medium">{popover.event.summary}</div>
+          <div className="p-3 text-sm text-muted-foreground">
+            {formatDisplayRange(popover.event.startDate, popover.event.endDate)}
+          </div>
+        </div>
+      )}
 
       {!signedIn && (
         <div className="pointer-events-none fixed inset-0 flex items-center justify-center bg-background/70">
