@@ -27,6 +27,30 @@ async function refreshGoogleAccessToken(refreshToken: string) {
   };
 }
 
+async function fetchGoogleEmail(accessToken: string): Promise<string | undefined> {
+  try {
+    const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (typeof data?.email === "string") return data.email as string;
+    }
+  } catch {}
+  try {
+    const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (typeof data?.email === "string") return data.email as string;
+    }
+  } catch {}
+  return undefined;
+}
+
 async function mergeAccountsFromDbAndSession(userId: string, session: any) {
   // Load DB accounts (may refresh and persist)
   const dbAccounts = await getFreshGoogleAccountsForUser(userId);
@@ -82,9 +106,13 @@ async function mergeAccountsFromDbAndSession(userId: string, session: any) {
       }
     }
     if (accessToken) {
+      let email = entry.email;
+      if (!email) {
+        email = await fetchGoogleEmail(accessToken).catch(() => undefined);
+      }
       merged.push({
         accountId: entry.accountId,
-        email: entry.email,
+        email,
         accessToken,
         refreshToken,
         accessTokenExpires: expiresAtMs,
@@ -109,32 +137,67 @@ export async function GET(req: Request) {
     return NextResponse.json({ calendars: [] }, { status: 200 });
   }
   const fetches = accounts.map(async (acc: any) => {
-    const url =
+    const baseUrl =
       "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&maxResults=250";
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${acc.accessToken}` },
-      cache: "no-store",
-    });
-    const status = res.status;
-    if (!res.ok) {
-      let error: string | undefined;
-      try {
-        const errJson = await res.json();
-        error = errJson?.error?.message || errJson?.error_description;
-      } catch {}
+    let tokenToUse: string | undefined = acc.accessToken as string | undefined;
+    let finalStatus: number | undefined;
+    let finalError: string | undefined;
+    async function doFetch(accessToken: string) {
+      const res = await fetch(baseUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const status = res.status;
+      if (!res.ok) {
+        let error: string | undefined;
+        try {
+          const errJson = await res.json();
+          error = errJson?.error?.message || errJson?.error_description;
+        } catch {}
+        return { ok: false as const, status, error, data: null as any };
+      }
+      const data = await res.json();
+      return { ok: true as const, status, error: undefined, data };
+    }
+    if (!tokenToUse) {
       return {
         items: [] as any[],
         accountId: acc.accountId,
         email: acc.email,
-        _debug: debug ? { status, error } : undefined,
+        status: 0,
+        error: "missing access token",
+        _debug: debug ? { status: 0, error: "missing access token" } : undefined,
       };
     }
-    const data = await res.json();
+    let attempt = await doFetch(tokenToUse);
+    if (!attempt.ok && attempt.status === 401 && acc.refreshToken) {
+      // refresh and retry once
+      try {
+        const refreshed = await refreshGoogleAccessToken(acc.refreshToken);
+        tokenToUse = refreshed.accessToken;
+        attempt = await doFetch(tokenToUse);
+      } catch (e) {
+        // keep first error
+      }
+    }
+    if (!attempt.ok) {
+      finalStatus = attempt.status;
+      finalError = attempt.error;
+      return {
+        items: [] as any[],
+        accountId: acc.accountId,
+        email: acc.email,
+        status: finalStatus,
+        error: finalError,
+        _debug: debug ? { status: finalStatus, error: finalError } : undefined,
+      };
+    }
     return {
-      items: data.items || [],
+      items: attempt.data.items || [],
       accountId: acc.accountId,
       email: acc.email,
-      _debug: debug ? { status } : undefined,
+      status: attempt.status,
+      _debug: debug ? { status: attempt.status } : undefined,
     };
   });
   const results = await Promise.all(fetches);
@@ -150,13 +213,19 @@ export async function GET(req: Request) {
       accessRole: c.accessRole as string | undefined,
     }))
   );
+  const accountsSummary = results.map((r) => ({
+    accountId: r.accountId,
+    email: r.email,
+    status: (r as any).status,
+    error: (r as any).error,
+  }));
   if (debug) {
     const diag = results.map((r) => ({
       accountId: (r as any).accountId,
       ...(r as any)._debug,
     }));
-    return NextResponse.json({ calendars, debug: diag });
+    return NextResponse.json({ calendars, accounts: accountsSummary, debug: diag });
   }
-  return NextResponse.json({ calendars });
+  return NextResponse.json({ calendars, accounts: accountsSummary });
 }
 

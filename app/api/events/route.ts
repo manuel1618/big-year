@@ -161,23 +161,40 @@ export async function GET(req: Request) {
   }
   const fetches: Promise<any>[] = [];
   for (const acc of accounts) {
+    let tokenToUse: string | undefined = acc.accessToken as string | undefined;
     const cals =
-      idsByAccount.size > 0
-        ? idsByAccount.get(acc.accountId) || []
-        : ["primary"];
+      idsByAccount.size > 0 ? idsByAccount.get(acc.accountId) || [] : ["primary"];
     for (const calId of cals) {
       const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
         calId
       )}/events?${params.toString()}`;
       fetches.push(
-        fetch(url, {
-          headers: { Authorization: `Bearer ${acc.accessToken}` },
-          cache: "no-store",
-        }).then(async (res) => {
-          if (!res.ok) return { items: [], calendarId: calId, accountId: acc.accountId };
-          const data = await res.json();
-          return { items: data.items || [], calendarId: calId, accountId: acc.accountId };
-        })
+        (async () => {
+          if (!tokenToUse) return { items: [], calendarId: calId, accountId: acc.accountId };
+          const doFetch = async (accessToken: string) => {
+            const res = await fetch(url, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              cache: "no-store",
+            });
+            if (!res.ok) return { ok: false as const, status: res.status, data: null as any };
+            const data = await res.json();
+            return { ok: true as const, status: res.status, data };
+          };
+          let attempt = await doFetch(tokenToUse);
+          if (!attempt.ok && attempt.status === 401 && acc.refreshToken) {
+            try {
+              const refreshed = await refreshGoogleAccessToken(acc.refreshToken);
+              tokenToUse = refreshed.accessToken;
+              attempt = await doFetch(tokenToUse);
+            } catch {}
+          }
+          if (!attempt.ok) return { items: [], calendarId: calId, accountId: acc.accountId };
+          return {
+            items: attempt.data.items || [],
+            calendarId: calId,
+            accountId: acc.accountId,
+          };
+        })()
       );
     }
   }

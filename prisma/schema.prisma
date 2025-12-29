@@ -30,6 +30,7 @@ model Account {
   token_type        String? @map("token_type")
   scope             String?
   id_token          String? @map("id_token")
+  refresh_token_expires_in Int? @map("refresh_token_expires_in")
   session_state     String?
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 

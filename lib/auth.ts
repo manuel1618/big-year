@@ -6,6 +6,24 @@ import { prisma } from "./prisma";
 
 // Ensure we always request offline access and explicit consent so Google issues a refresh_token.
 
+function base64UrlDecode(input: string): string {
+  const pad = input.length % 4 === 2 ? "==" : input.length % 4 === 3 ? "=" : "";
+  const base64 = input.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  return Buffer.from(base64, "base64").toString("utf8");
+}
+function emailFromIdToken(idToken?: string): string | undefined {
+  if (!idToken || typeof idToken !== "string") return undefined;
+  const parts = idToken.split(".");
+  if (parts.length < 2) return undefined;
+  try {
+    const payloadJson = base64UrlDecode(parts[1] || "");
+    const payload = JSON.parse(payloadJson);
+    return typeof payload?.email === "string" ? payload.email : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function refreshAccessToken(token: any) {
   try {
     const params = new URLSearchParams({
@@ -89,11 +107,15 @@ export const authOptions: NextAuthOptions = {
               ? parseInt(expiresInSecRaw, 10)
               : undefined;
         const acctId = account.providerAccountId as string;
+        // Try to attach the correct per-account email using id_token if available
+        const acctEmail =
+          emailFromIdToken((account as any)?.id_token as string | undefined) ||
+          (user?.email as string | undefined);
         const existing = (token.googleAccounts as any[]) || [];
         const updated = existing.filter((a) => a.accountId !== acctId);
         updated.push({
           accountId: acctId,
-          email: user?.email as string | undefined,
+          email: acctEmail,
           accessToken: account.access_token as string,
           refreshToken: (account.refresh_token as string) || undefined,
           accessTokenExpires:
@@ -150,6 +172,9 @@ export const authOptions: NextAuthOptions = {
   },
   session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
+  // In development, allow linking accounts that share the same email even if the user isn't currently signed-in.
+  // This helps recover when partial users exist after local wipes. Remove or set to false in production.
+  allowDangerousEmailAccountLinking: process.env.NODE_ENV !== "production",
 };
 
 

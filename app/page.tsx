@@ -3,7 +3,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { YearCalendar, AllDayEvent } from "@/components/year-calendar";
-import { ChevronLeft, ChevronRight, Unlink, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Unlink, Plus, RefreshCcw } from "lucide-react";
 
 type CalendarListItem = {
   id: string;
@@ -12,6 +12,12 @@ type CalendarListItem = {
   backgroundColor?: string;
   accountEmail?: string;
   accessRole?: string;
+};
+type LinkedAccount = {
+  accountId: string;
+  email?: string;
+  status?: number;
+  error?: string;
 };
 
 function isoDateOnlyFromDate(d: Date) {
@@ -27,6 +33,7 @@ export default function HomePage() {
   const [events, setEvents] = useState<AllDayEvent[]>([]);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [calendars, setCalendars] = useState<CalendarListItem[]>([]);
+  const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [calendarColors, setCalendarColors] = useState<Record<string, string>>({});
@@ -44,16 +51,32 @@ export default function HomePage() {
     const canWrite = new Set(["owner", "writer"]);
     return calendars.filter((c) => (c.accessRole ? canWrite.has(c.accessRole) : false));
   }, [calendars]);
-  const calendarsByEmail = useMemo(() => {
-    const map = new Map<string, typeof calendars>();
+  const accountsWithCalendars = useMemo(() => {
+    if (accounts.length > 0) {
+      return accounts.map((acc) => ({
+        accountId: acc.accountId,
+        email: acc.email || "Other",
+        list: calendars.filter((c) => c.id.startsWith(`${acc.accountId}|`)),
+      }));
+    }
+    // Fallback grouping if accounts not provided
+    const map = new Map<string, CalendarListItem[]>();
+    const emailByAcc = new Map<string, string>();
     for (const c of calendars) {
-      const key = c.accountEmail || "Other";
+      const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
+      const email = c.accountEmail || "Other";
+      emailByAcc.set(accId, email);
+      const key = accId || email;
       const arr = map.get(key) ?? [];
       arr.push(c);
       map.set(key, arr);
     }
-    return Array.from(map.entries());
-  }, [calendars]);
+    return Array.from(map.entries()).map(([key, list]) => ({
+      accountId: key,
+      email: emailByAcc.get(key) || "Other",
+      list,
+    }));
+  }, [accounts, calendars]);
   const calendarNames = useMemo(() => {
     const map: Record<string, string> = {};
     for (const c of calendars) {
@@ -123,7 +146,25 @@ export default function HomePage() {
       .then((res) => res.json())
       .then((data) => {
         const list = (data.calendars || []) as CalendarListItem[];
+        const accs = (data.accounts || []) as LinkedAccount[];
         setCalendars(list);
+        if (Array.isArray(accs) && accs.length > 0) {
+          setAccounts(accs);
+        } else {
+          // derive unique accounts from calendars
+          const uniq = Array.from(
+            new Map(
+              list
+                .map((c) => ({
+                  accountId: c.id.includes("|") ? c.id.split("|")[0] : "",
+                  email: c.accountEmail,
+                }))
+                .filter((x) => x.accountId)
+                .map((x) => [x.accountId, x])
+            ).values()
+          );
+          setAccounts(uniq);
+        }
         // Restore previous selection; if linking a new account, auto-add its calendars
         const allIds = list.map((c) => c.id);
         let prev: string[] = [];
@@ -527,13 +568,13 @@ export default function HomePage() {
             </div>
             <div className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
               {status === "authenticated" ? (
-                calendarsByEmail.map(([email, list]) => (
-                  <div key={email} className="space-y-1">
+                accountsWithCalendars.map(({ accountId, email, list }) => (
+                  <div key={accountId || email} className="space-y-1">
                     <div className="px-2 pt-3 pb-1 flex items-center justify-between">
                       <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        {email}
+                        {(email && email.length ? email : (accountId || "Account"))}
                       </div>
-                      {list.length > 0 && (
+                      {true && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -541,12 +582,36 @@ export default function HomePage() {
                           aria-label={`Disconnect ${email}`}
                           title={`Disconnect ${email}`}
                           onClick={() => {
-                            const first = list[0];
-                            const accountId = first.id.split("|")[0];
                             disconnectAccount(accountId);
                           }}
                         >
                           <Unlink className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {true && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                          aria-label={`Reconnect ${email}`}
+                          title={`Reconnect ${email}`}
+                          onClick={() => {
+                            try {
+                              const existing = Array.from(new Set(accounts.map((a) => a.accountId))).filter(Boolean);
+                              localStorage.setItem("preLinkAccountIds", JSON.stringify(existing));
+                            } catch {}
+                            import("next-auth/react").then(({ signIn }) => {
+                              const href = window.location.href;
+                              const hasQuery = href.includes("?");
+                              const callbackUrl = `${href}${hasQuery ? "&" : "?"}linkingAccount=1`;
+                              // Force consent and target this account by email so we (re)obtain a refresh_token
+                              const providerParams: Record<string, string> = { prompt: "consent", access_type: "offline" };
+                              if (email && email.includes("@")) providerParams.login_hint = email;
+                              signIn("google", { callbackUrl }, providerParams);
+                            });
+                          }}
+                        >
+                          <RefreshCcw className="h-4 w-4" />
                         </Button>
                       )}
                     </div>
@@ -611,13 +676,7 @@ export default function HomePage() {
                     onClick={() => {
                       // Persist existing accountIds so we can auto-add the new account's calendars after linking
                       try {
-                        const existing = Array.from(
-                          new Set(
-                            calendars
-                              .map((c) => (c.id.includes("|") ? c.id.split("|")[0] : ""))
-                              .filter(Boolean)
-                          )
-                        );
+                        const existing = Array.from(new Set(accounts.map((a) => a.accountId))).filter(Boolean);
                         localStorage.setItem("preLinkAccountIds", JSON.stringify(existing));
                       } catch {}
                       import("next-auth/react").then(({ signIn }) => {
