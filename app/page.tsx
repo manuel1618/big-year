@@ -715,6 +715,16 @@ export default function HomePage() {
           calendarColors={calendarColors}
           calendarNames={calendarNames}
           calendarAccounts={calendarAccounts}
+          onDeleteEvent={async (id) => {
+            try {
+              await fetch("/api/events", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id }),
+              });
+            } catch {}
+            await onRefresh();
+          }}
           onHideEvent={(id) => {
             setHiddenEventIds((prev) =>
               prev.includes(id) ? prev : [...prev, id]

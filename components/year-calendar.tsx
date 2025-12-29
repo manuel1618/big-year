@@ -126,6 +126,7 @@ export function YearCalendar({
   calendarNames = {},
   calendarAccounts = {},
   onHideEvent,
+  onDeleteEvent,
 }: {
   year: number;
   events: AllDayEvent[];
@@ -134,6 +135,7 @@ export function YearCalendar({
   calendarNames?: Record<string, string>;
   calendarAccounts?: Record<string, string>;
   onHideEvent?: (id: string) => void;
+  onDeleteEvent?: (id: string) => Promise<void> | void;
 }) {
   const todayKey = formatDateKey(new Date());
   const dateMap = useMemo(() => expandEventsToDateMap(events), [events]);
@@ -392,10 +394,8 @@ export function YearCalendar({
                     <div
                       className="truncate rounded-sm px-1 text-[10px] leading-[14px] shadow-sm"
                       style={{
-                        backgroundColor: bg
-                          ? hexToRgba(bg, 0.35)
-                          : "hsl(var(--secondary) / 0.35)",
-                        color: "hsl(var(--secondary-foreground))",
+                        backgroundColor: bg || "hsl(var(--secondary))",
+                        color: "#ffffff",
                         height: laneHeight - 2,
                         lineHeight: `${laneHeight - 4}px`,
                       }}
@@ -473,6 +473,27 @@ export function YearCalendar({
             >
               Hide event
             </button>
+            {onDeleteEvent && popover.event && (
+              <button
+                className="ml-2 rounded border border-destructive text-destructive px-2 py-1 text-xs hover:bg-destructive hover:text-destructive-foreground transition"
+                onClick={async () => {
+                  const id = popover.event?.id;
+                  if (!id) return;
+                  const ok =
+                    typeof window !== "undefined"
+                      ? window.confirm("Delete this event?")
+                      : true;
+                  if (!ok) return;
+                  try {
+                    await onDeleteEvent(id);
+                  } finally {
+                    setPopover({ event: null, x: 0, y: 0 });
+                  }
+                }}
+              >
+                Delete event
+              </button>
+            )}
           </div>
         </div>
       )}

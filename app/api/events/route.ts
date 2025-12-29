@@ -305,4 +305,61 @@ export async function POST(req: Request) {
   });
 }
 
+export async function DELETE(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!(session as any)?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const compositeId = typeof body?.id === "string" ? body.id : "";
+  // Expected format: `${accountId}|${calendarId}:${eventId}`
+  const [accAndCal, eventId] = compositeId.split(":");
+  const [accountId, calendarId] = (accAndCal || "").split("|");
+  if (!accountId || !calendarId || !eventId) {
+    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+
+  const accounts = await mergeAccountsFromDbAndSession(
+    (session as any).user.id as string,
+    session as any
+  );
+  const account = accounts.find((a) => a.accountId === accountId);
+  if (!account) {
+    return NextResponse.json({ error: "Account not found" }, { status: 404 });
+  }
+
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+    calendarId
+  )}/events/${encodeURIComponent(eventId)}`;
+  let res = await fetch(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${account.accessToken}` },
+    cache: "no-store",
+  });
+  if (res.status === 401 && account.refreshToken) {
+    try {
+      const refreshed = await refreshGoogleAccessToken(account.refreshToken);
+      res = await fetch(url, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${refreshed.accessToken}` },
+        cache: "no-store",
+      });
+    } catch {}
+  }
+  if (!res.ok && res.status !== 204) {
+    let errText = "Failed to delete event";
+    try {
+      const errJson = await res.json();
+      errText = errJson?.error?.message || errJson?.error_description || errText;
+    } catch {}
+    return NextResponse.json({ error: errText }, { status: res.status });
+  }
+  return NextResponse.json({ ok: true });
+}
+
 
