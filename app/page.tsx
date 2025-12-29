@@ -124,15 +124,70 @@ export default function HomePage() {
       .then((data) => {
         const list = (data.calendars || []) as CalendarListItem[];
         setCalendars(list);
-        // Restore previous selection; if none stored, default to all
+        // Restore previous selection; if linking a new account, auto-add its calendars
         const allIds = list.map((c) => c.id);
         let prev: string[] = [];
         try {
           prev = JSON.parse(localStorage.getItem("selectedCalendarIds") || "[]") || [];
         } catch {}
-        const restored =
-          prev.length > 0 ? prev.filter((id) => allIds.includes(id)) : allIds;
-        setSelectedCalendarIds(restored);
+        const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
+        const isLinkingReturn = !!url && url.searchParams.get("linkingAccount") === "1";
+        if (isLinkingReturn) {
+          // Determine which accountIds are new compared to pre-link snapshot
+          let beforeIds: string[] = [];
+          try {
+            beforeIds = JSON.parse(localStorage.getItem("preLinkAccountIds") || "[]") || [];
+          } catch {}
+          const beforeSet = new Set(beforeIds);
+          const currentAccountIds = Array.from(
+            new Set(list.map((c) => (c.id.includes("|") ? c.id.split("|")[0] : "")).filter(Boolean))
+          );
+          const newAccountIdSet = new Set(currentAccountIds.filter((id) => !beforeSet.has(id)));
+          const prevFiltered = prev.filter((id) => allIds.includes(id));
+          const toAdd = list
+            .filter((c) => {
+              const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
+              return accId && newAccountIdSet.has(accId);
+            })
+            .map((c) => c.id);
+          const merged = Array.from(new Set([...prevFiltered, ...toAdd]));
+          setSelectedCalendarIds(merged);
+          // Cleanup flag and snapshot
+          try { localStorage.removeItem("preLinkAccountIds"); } catch {}
+          if (url) {
+            url.searchParams.delete("linkingAccount");
+            history.replaceState({}, "", url.toString());
+          }
+        } else {
+          // Fallback: auto-add calendars from any account not yet represented in selection
+          const prevFiltered =
+            prev.length > 0 ? prev.filter((id) => allIds.includes(id)) : allIds;
+          const prevAccIds = new Set(
+            prevFiltered
+              .map((id) => (id.includes("|") ? id.split("|")[0] : ""))
+              .filter(Boolean)
+          );
+          const allAccIds = Array.from(
+            new Set(
+              list
+                .map((c) => (c.id.includes("|") ? c.id.split("|")[0] : ""))
+                .filter(Boolean)
+            )
+          );
+          const newAccIds = allAccIds.filter((id) => !prevAccIds.has(id));
+          if (newAccIds.length > 0) {
+            const toAdd = list
+              .filter((c) => {
+                const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
+                return accId && newAccIds.includes(accId);
+              })
+              .map((c) => c.id);
+            const merged = Array.from(new Set([...prevFiltered, ...toAdd]));
+            setSelectedCalendarIds(merged);
+          } else {
+            setSelectedCalendarIds(prevFiltered);
+          }
+        }
         // Load colors from localStorage, default to API backgroundColor or a soft palette
         try {
           const stored = JSON.parse(localStorage.getItem("calendarColors") || "{}");
@@ -554,9 +609,23 @@ export default function HomePage() {
                     size="sm"
                     className="w-full justify-center gap-2"
                     onClick={() => {
-                      import("next-auth/react").then(({ signIn }) =>
-                        signIn("google", { callbackUrl: window.location.href })
-                      );
+                      // Persist existing accountIds so we can auto-add the new account's calendars after linking
+                      try {
+                        const existing = Array.from(
+                          new Set(
+                            calendars
+                              .map((c) => (c.id.includes("|") ? c.id.split("|")[0] : ""))
+                              .filter(Boolean)
+                          )
+                        );
+                        localStorage.setItem("preLinkAccountIds", JSON.stringify(existing));
+                      } catch {}
+                      import("next-auth/react").then(({ signIn }) => {
+                        const href = window.location.href;
+                        const hasQuery = href.includes("?");
+                        const callbackUrl = `${href}${hasQuery ? "&" : "?"}linkingAccount=1`;
+                        signIn("google", { callbackUrl });
+                      });
                     }}
                   >
                     <Plus className="h-4 w-4" />
