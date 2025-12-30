@@ -16,6 +16,7 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+  preferences   UserPreferences?
 }
 
 model Account {
@@ -51,6 +52,18 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+model UserPreferences {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedCalendarIds String  @default("[]") // JSON array
+  hiddenEventIds     String   @default("[]") // JSON array
+  showDaysOfWeek    Boolean  @default(true)
+  showHidden         Boolean  @default(false)
+  calendarColors    String   @default("{}") // JSON object
+  updatedAt          DateTime @updatedAt
 }
 
 

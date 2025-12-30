@@ -13,6 +13,15 @@ export type AllDayEvent = {
   calendarId?: string;
 };
 
+export type CalendarListItem = {
+  id: string;
+  summary: string;
+  primary?: boolean;
+  backgroundColor?: string;
+  accountEmail?: string;
+  accessRole?: string;
+};
+
 function formatDateKey(date: Date) {
   const y = date.getFullYear();
   const m = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -100,6 +109,8 @@ const monthShort = [
   "Dec",
 ];
 
+const dayOfWeekShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
 function hexToRgba(hex: string, alpha = 0.35) {
   try {
     let h = hex.replace("#", "").trim();
@@ -130,6 +141,10 @@ export function YearCalendar({
   onHideEvent,
   onDeleteEvent,
   onDayClick,
+  onUpdateEvent,
+  writableCalendars = [],
+  writableAccountsWithCalendars = [],
+  showDaysOfWeek = true,
 }: {
   year: number;
   events: AllDayEvent[];
@@ -140,6 +155,20 @@ export function YearCalendar({
   onHideEvent?: (id: string) => void;
   onDeleteEvent?: (id: string) => Promise<void> | void;
   onDayClick?: (dateKey: string) => void;
+  onUpdateEvent?: (event: {
+    id: string;
+    title: string;
+    calendarId: string;
+    startDate: string;
+    endDate?: string;
+  }) => Promise<void> | void;
+  writableCalendars?: CalendarListItem[];
+  writableAccountsWithCalendars?: Array<{
+    accountId: string;
+    email: string;
+    list: CalendarListItem[];
+  }>;
+  showDaysOfWeek?: boolean;
 }) {
   const todayKey = formatDateKey(new Date());
   const dateMap = useMemo(() => expandEventsToDateMap(events), [events]);
@@ -160,6 +189,13 @@ export function YearCalendar({
     y: number;
   }>({ event: null, x: 0, y: 0 });
   const popoverRef = React.useRef<HTMLDivElement | null>(null);
+  const [isEditing, setIsEditing] = React.useState<boolean>(false);
+  const [editTitle, setEditTitle] = React.useState<string>("");
+  const [editCalendarId, setEditCalendarId] = React.useState<string>("");
+  const [editStartDate, setEditStartDate] = React.useState<string>("");
+  const [editHasEndDate, setEditHasEndDate] = React.useState<boolean>(false);
+  const [editEndDate, setEditEndDate] = React.useState<string>("");
+  const [isSubmitting, setIsSubmitting] = React.useState<boolean>(false);
 
   // Important for hydration: start with a deterministic server/client match,
   // then compute real columns after mount to avoid style mismatches.
@@ -202,13 +238,18 @@ export function YearCalendar({
       if (popoverRef.current && e.target instanceof Node) {
         if (!popoverRef.current.contains(e.target)) {
           setPopover({ event: null, x: 0, y: 0 });
+          setIsEditing(false);
         }
       } else {
         setPopover({ event: null, x: 0, y: 0 });
+        setIsEditing(false);
       }
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setPopover({ event: null, x: 0, y: 0 });
+      if (e.key === "Escape") {
+        setPopover({ event: null, x: 0, y: 0 });
+        setIsEditing(false);
+      }
     }
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKey);
@@ -217,6 +258,31 @@ export function YearCalendar({
       document.removeEventListener("keydown", onKey);
     };
   }, [popover.event]);
+
+  React.useEffect(() => {
+    if (popover.event && !isEditing) {
+      // Initialize edit state when popover opens
+      setEditTitle(popover.event.summary);
+      setEditCalendarId(popover.event.calendarId || "");
+      setEditStartDate(popover.event.startDate);
+      // Check if event has an end date (endDate is exclusive, so if it's different from startDate + 1 day, it's a multi-day event)
+      const start = new Date(popover.event.startDate + "T00:00:00Z");
+      const end = new Date(popover.event.endDate + "T00:00:00Z");
+      const daysDiff = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff > 1) {
+        setEditHasEndDate(true);
+        // Convert exclusive endDate to inclusive for editing
+        const endInclusive = new Date(end.getTime() - 86400000);
+        const y = endInclusive.getUTCFullYear();
+        const m = `${endInclusive.getUTCMonth() + 1}`.padStart(2, "0");
+        const d = `${endInclusive.getUTCDate()}`.padStart(2, "0");
+        setEditEndDate(`${y}-${m}-${d}`);
+      } else {
+        setEditHasEndDate(false);
+        setEditEndDate("");
+      }
+    }
+  }, [popover.event, isEditing]);
 
   function formatDisplayRange(startIsoDate: string, endIsoDate: string) {
     const start = new Date(startIsoDate + "T00:00:00");
@@ -280,7 +346,7 @@ export function YearCalendar({
                   "relative bg-background p-1 min-w-0 min-h-0 overflow-hidden",
                   isWeekend &&
                     'bg-white before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none',
-                  isToday && "ring-2 ring-primary",
+                  isToday && "ring-1 ring-primary",
                   onDayClick && "cursor-pointer"
                 )}
                 title={date.toDateString()}
@@ -302,6 +368,11 @@ export function YearCalendar({
                     isFirstOfMonth && "ml-7"
                   )}
                 >
+                  {showDaysOfWeek && (
+                    <span className="text-[8px] opacity-60 mr-0.5">
+                      {dayOfWeekShort[date.getDay()]}
+                    </span>
+                  )}
                   {date.getDate()}
                 </div>
                 {/* Event chips removed; events are rendered as spanning bars below */}
@@ -430,82 +501,243 @@ export function YearCalendar({
       {popover.event && (
         <div
           ref={popoverRef}
-          className="fixed z-50 w-72 max-w-[90vw] rounded-md border bg-card shadow-lg"
+          className="fixed z-50 w-80 max-w-[90vw] rounded-md border bg-card shadow-lg"
           style={{
             top: popover.y,
             left: popover.x,
             transform: "translateX(-50%)",
           }}
           role="dialog"
-          aria-label="Event details"
+          aria-label={isEditing ? "Edit event" : "Event details"}
         >
-          <div className="px-3 py-2 font-medium">{popover.event.summary}</div>
-          <div className="px-3 text-sm text-muted-foreground flex items-center gap-2">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{
-                backgroundColor:
-                  (popover.event.calendarId &&
-                    calendarColors[popover.event.calendarId]) ||
-                  "hsl(var(--secondary))",
-              }}
-            />
-            <span className="truncate">
-              {(popover.event.calendarId &&
-                calendarNames[popover.event.calendarId]) ||
-                "Calendar"}
-              {popover.event.calendarId &&
-                calendarAccounts &&
-                calendarAccounts[popover.event.calendarId] && (
-                  <span className="ml-1 text-muted-foreground">
-                    ({calendarAccounts[popover.event.calendarId]})
-                  </span>
+          {isEditing ? (
+            <>
+              <div className="px-3 py-2 border-b flex items-center justify-between">
+                <div className="font-medium">Edit event</div>
+                <button
+                  className="text-muted-foreground hover:text-foreground text-xl leading-none"
+                  onClick={() => setIsEditing(false)}
+                  disabled={isSubmitting}
+                  aria-label="Cancel"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="p-3 space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Title</label>
+                  <input
+                    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    disabled={isSubmitting}
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Start date</label>
+                  <input
+                    type="date"
+                    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                    value={editStartDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEditStartDate(v);
+                      if (editHasEndDate && editEndDate && v && editEndDate < v) {
+                        setEditEndDate(v);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={editHasEndDate}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setEditHasEndDate(on);
+                        if (on && !editEndDate) setEditEndDate(editStartDate);
+                        if (!on) setEditEndDate("");
+                      }}
+                      disabled={isSubmitting}
+                    />
+                    <span className="font-medium">Add end date</span>
+                  </label>
+                  {editHasEndDate && (
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium">End date</label>
+                      <input
+                        type="date"
+                        className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                        value={editEndDate}
+                        min={editStartDate || undefined}
+                        onChange={(e) => setEditEndDate(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Calendar</label>
+                  <select
+                    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+                    value={editCalendarId}
+                    onChange={(e) => setEditCalendarId(e.target.value)}
+                    disabled={isSubmitting}
+                  >
+                    {writableAccountsWithCalendars.length > 0 ? (
+                      writableAccountsWithCalendars.map(
+                        ({ accountId, email, list }) => (
+                          <optgroup
+                            key={accountId || email}
+                            label={email && email.length ? email : accountId || "Account"}
+                          >
+                            {list.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.summary}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )
+                      )
+                    ) : (
+                      writableCalendars.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {(c.accountEmail ? `${c.accountEmail} — ` : "") + c.summary}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              </div>
+              <div className="px-3 pb-3 border-t flex items-center justify-end gap-2 pt-3">
+                <button
+                  className="rounded border px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground transition"
+                  onClick={() => setIsEditing(false)}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded border bg-primary text-primary-foreground px-2 py-1 text-xs hover:bg-primary/90 transition"
+                  onClick={async () => {
+                    if (!popover.event || !onUpdateEvent) return;
+                    if (!editTitle.trim()) {
+                      alert("Title is required");
+                      return;
+                    }
+                    if (!editCalendarId) {
+                      alert("Calendar is required");
+                      return;
+                    }
+                    if (editHasEndDate && editEndDate && editEndDate < editStartDate) {
+                      alert("End date must be on/after start date");
+                      return;
+                    }
+                    try {
+                      setIsSubmitting(true);
+                      await onUpdateEvent({
+                        id: popover.event.id,
+                        title: editTitle.trim(),
+                        calendarId: editCalendarId,
+                        startDate: editStartDate,
+                        endDate: editHasEndDate ? editEndDate : undefined,
+                      });
+                      setIsEditing(false);
+                      setPopover({ event: null, x: 0, y: 0 });
+                    } catch (err) {
+                      alert("Failed to update event");
+                    } finally {
+                      setIsSubmitting(false);
+                    }
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="px-3 py-2 font-medium">{popover.event.summary}</div>
+              <div className="px-3 text-sm text-muted-foreground flex items-center gap-2">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{
+                    backgroundColor:
+                      (popover.event.calendarId &&
+                        calendarColors[popover.event.calendarId]) ||
+                      "hsl(var(--secondary))",
+                  }}
+                />
+                <span className="truncate">
+                  {(popover.event.calendarId &&
+                    calendarNames[popover.event.calendarId]) ||
+                    "Calendar"}
+                  {popover.event.calendarId &&
+                    calendarAccounts &&
+                    calendarAccounts[popover.event.calendarId] && (
+                      <span className="ml-1 text-muted-foreground">
+                        ({calendarAccounts[popover.event.calendarId]})
+                      </span>
+                    )}
+                </span>
+              </div>
+              <div className="px-3 pb-3 mt-1.5 text-sm text-muted-foreground flex items-center gap-2">
+                <CalendarIcon className="h-2.5 w-2.5" />
+                <span>
+                  {formatDisplayRange(
+                    popover.event.startDate,
+                    popover.event.endDate
+                  )}
+                </span>
+              </div>
+              <div className="px-3 pb-3 flex items-center gap-2 flex-wrap">
+                {onUpdateEvent && writableCalendars.length > 0 && (
+                  <button
+                    className="rounded border px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground transition"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    Edit
+                  </button>
                 )}
-            </span>
-          </div>
-          <div className="px-3 pb-3 mt-1.5 text-sm text-muted-foreground flex items-center gap-2">
-            <CalendarIcon className="h-2.5 w-2.5" />
-            <span>
-              {formatDisplayRange(
-                popover.event.startDate,
-                popover.event.endDate
-              )}
-            </span>
-          </div>
-          <div className="px-3 pb-3">
-            <button
-              className="rounded border px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground transition"
-              onClick={() => {
-                if (onHideEvent && popover.event) {
-                  onHideEvent(popover.event.id);
-                }
-                setPopover({ event: null, x: 0, y: 0 });
-              }}
-            >
-              Hide event
-            </button>
-            {onDeleteEvent && popover.event && (
-              <button
-                className="ml-2 rounded border border-destructive text-destructive px-2 py-1 text-xs hover:bg-destructive hover:text-destructive-foreground transition"
-                onClick={async () => {
-                  const id = popover.event?.id;
-                  if (!id) return;
-                  const ok =
-                    typeof window !== "undefined"
-                      ? window.confirm("Delete this event?")
-                      : true;
-                  if (!ok) return;
-                  try {
-                    await onDeleteEvent(id);
-                  } finally {
+                <button
+                  className="rounded border px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground transition"
+                  onClick={() => {
+                    if (onHideEvent && popover.event) {
+                      onHideEvent(popover.event.id);
+                    }
                     setPopover({ event: null, x: 0, y: 0 });
-                  }
-                }}
-              >
-                Delete event
-              </button>
-            )}
-          </div>
+                  }}
+                >
+                  Hide event
+                </button>
+                {onDeleteEvent && popover.event && (
+                  <button
+                    className="rounded border border-destructive text-destructive px-2 py-1 text-xs hover:bg-destructive hover:text-destructive-foreground transition"
+                    onClick={async () => {
+                      const id = popover.event?.id;
+                      if (!id) return;
+                      const ok =
+                        typeof window !== "undefined"
+                          ? window.confirm("Delete this event?")
+                          : true;
+                      if (!ok) return;
+                      try {
+                        await onDeleteEvent(id);
+                      } finally {
+                        setPopover({ event: null, x: 0, y: 0 });
+                      }
+                    }}
+                  >
+                    Delete event
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

@@ -9,6 +9,7 @@ import {
   Unlink,
   Plus,
   RefreshCcw,
+  Settings,
 } from "lucide-react";
 
 type CalendarListItem = {
@@ -42,11 +43,13 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [settingsDropdownOpen, setSettingsDropdownOpen] = useState<boolean>(false);
   const [calendarColors, setCalendarColors] = useState<Record<string, string>>(
     {}
   );
   const [hiddenEventIds, setHiddenEventIds] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [showDaysOfWeek, setShowDaysOfWeek] = useState<boolean>(true);
   const [createOpen, setCreateOpen] = useState<boolean>(false);
   const [createTitle, setCreateTitle] = useState<string>("");
   const [createStartDate, setCreateStartDate] = useState<string>("");
@@ -56,6 +59,7 @@ export default function HomePage() {
   const [createSubmitting, setCreateSubmitting] = useState<boolean>(false);
   const [createError, setCreateError] = useState<string>("");
   const createDateFromDayClick = useRef<string | null>(null);
+  const preferencesLoaded = useRef<boolean>(false);
   const writableCalendars = useMemo(() => {
     const canWrite = new Set(["owner", "writer"]);
     return calendars.filter((c) =>
@@ -132,19 +136,52 @@ export default function HomePage() {
     return map;
   }, [calendars]);
 
-  // Load hidden events from storage
+  // Load preferences from server when authenticated
+  useEffect(() => {
+    if (status === "authenticated" && !preferencesLoaded.current) {
+      preferencesLoaded.current = true;
+      fetch("/api/preferences")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.selectedCalendarIds !== undefined) {
+            setSelectedCalendarIds(data.selectedCalendarIds);
+          }
+          if (data.hiddenEventIds !== undefined) {
+            setHiddenEventIds(data.hiddenEventIds);
+          }
+          if (data.showDaysOfWeek !== undefined) {
+            setShowDaysOfWeek(data.showDaysOfWeek);
+          }
+          if (data.showHidden !== undefined) {
+            setShowHidden(data.showHidden);
+          }
+          if (data.calendarColors !== undefined) {
+            setCalendarColors(data.calendarColors);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load preferences:", err);
+          preferencesLoaded.current = false;
+        });
+    } else if (status !== "authenticated") {
+      preferencesLoaded.current = false;
+    }
+  }, [status]);
+  // Load showHidden from storage
   useEffect(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem("hiddenEventIds") || "[]");
-      if (Array.isArray(stored)) setHiddenEventIds(stored);
+      const stored = localStorage.getItem("showHidden");
+      if (stored !== null) {
+        setShowHidden(stored === "true");
+      }
     } catch {}
   }, []);
-  // Persist hidden events
+  // Persist showHidden
   useEffect(() => {
     try {
-      localStorage.setItem("hiddenEventIds", JSON.stringify(hiddenEventIds));
+      localStorage.setItem("showHidden", JSON.stringify(showHidden));
     } catch {}
-  }, [hiddenEventIds]);
+  }, [showHidden]);
 
   const visibleEvents = useMemo(() => {
     if (showHidden) return events;
@@ -181,9 +218,8 @@ export default function HomePage() {
     if (status !== "authenticated") {
       setCalendars([]);
       setSelectedCalendarIds([]);
-      try {
-        localStorage.removeItem("selectedCalendarIds");
-      } catch {}
+      // Don't remove selectedCalendarIds from localStorage when signing out
+      // so they persist when user signs back in
       return;
     }
     fetch(`/api/calendars`, { cache: "no-store" })
@@ -209,20 +245,15 @@ export default function HomePage() {
           );
           setAccounts(uniq);
         }
-        // Restore previous selection; if linking a new account, auto-add its calendars
+        // Handle calendar selection: filter invalid, add new account calendars
         const allIds = list.map((c) => c.id);
-        let prev: string[] = [];
-        try {
-          prev =
-            JSON.parse(localStorage.getItem("selectedCalendarIds") || "[]") ||
-            [];
-        } catch {}
         const url =
           typeof window !== "undefined" ? new URL(window.location.href) : null;
         const isLinkingReturn =
           !!url && url.searchParams.get("linkingAccount") === "1";
+        
         if (isLinkingReturn) {
-          // Determine which accountIds are new compared to pre-link snapshot
+          // Linking return: add calendars from new accounts
           let beforeIds: string[] = [];
           try {
             beforeIds =
@@ -240,16 +271,16 @@ export default function HomePage() {
           const newAccountIdSet = new Set(
             currentAccountIds.filter((id) => !beforeSet.has(id))
           );
-          const prevFiltered = prev.filter((id) => allIds.includes(id));
+          const currentFiltered = selectedCalendarIds.filter((id) => allIds.includes(id));
           const toAdd = list
             .filter((c) => {
               const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
               return accId && newAccountIdSet.has(accId);
             })
             .map((c) => c.id);
-          const merged = Array.from(new Set([...prevFiltered, ...toAdd]));
+          const merged = Array.from(new Set([...currentFiltered, ...toAdd]));
           setSelectedCalendarIds(merged);
-          // Cleanup flag and snapshot
+          // Cleanup
           try {
             localStorage.removeItem("preLinkAccountIds");
           } catch {}
@@ -258,11 +289,12 @@ export default function HomePage() {
             history.replaceState({}, "", url.toString());
           }
         } else {
-          // Fallback: auto-add calendars from any account not yet represented in selection
-          const prevFiltered =
-            prev.length > 0 ? prev.filter((id) => allIds.includes(id)) : allIds;
-          const prevAccIds = new Set(
-            prevFiltered
+          // Normal load: filter invalid calendars and add new account calendars
+          const validCurrent = selectedCalendarIds.filter((id) => allIds.includes(id));
+          
+          // Check for new accounts
+          const currentAccIds = new Set(
+            validCurrent
               .map((id) => (id.includes("|") ? id.split("|")[0] : ""))
               .filter(Boolean)
           );
@@ -273,38 +305,44 @@ export default function HomePage() {
                 .filter(Boolean)
             )
           );
-          const newAccIds = allAccIds.filter((id) => !prevAccIds.has(id));
-          if (newAccIds.length > 0) {
-            const toAdd = list
-              .filter((c) => {
-                const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
-                return accId && newAccIds.includes(accId);
-              })
-              .map((c) => c.id);
-            const merged = Array.from(new Set([...prevFiltered, ...toAdd]));
-            setSelectedCalendarIds(merged);
+          const newAccIds = allAccIds.filter((id) => !currentAccIds.has(id));
+          
+          if (preferencesLoaded.current) {
+            // Preferences loaded - filter invalid and add new accounts
+            if (newAccIds.length > 0) {
+              const toAdd = list
+                .filter((c) => {
+                  const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
+                  return accId && newAccIds.includes(accId);
+                })
+                .map((c) => c.id);
+              const merged = Array.from(new Set([...validCurrent, ...toAdd]));
+              if (merged.length !== selectedCalendarIds.length || 
+                  !merged.every(id => selectedCalendarIds.includes(id))) {
+                setSelectedCalendarIds(merged);
+              }
+            } else {
+              // Just filter invalid calendars
+              if (validCurrent.length !== selectedCalendarIds.length ||
+                  !validCurrent.every(id => selectedCalendarIds.includes(id))) {
+                setSelectedCalendarIds(validCurrent);
+              }
+            }
           } else {
-            setSelectedCalendarIds(prevFiltered);
+            // Preferences not loaded yet - first time user, auto-select all
+            setSelectedCalendarIds(allIds);
           }
         }
-        // Load colors from localStorage, default to API backgroundColor or a soft palette
-        try {
-          const stored = JSON.parse(
-            localStorage.getItem("calendarColors") || "{}"
-          );
-          const next: Record<string, string> = { ...(stored || {}) };
-          for (const c of list) {
-            if (!next[c.id]) {
-              next[c.id] = c.backgroundColor || "#cbd5e1"; // slate-300 fallback
-            }
+        
+        // Update calendar colors (merge with existing, add defaults for new calendars)
+        const next: Record<string, string> = { ...calendarColors };
+        for (const c of list) {
+          if (!next[c.id]) {
+            next[c.id] = c.backgroundColor || "#cbd5e1";
           }
+        }
+        if (JSON.stringify(next) !== JSON.stringify(calendarColors)) {
           setCalendarColors(next);
-          localStorage.setItem("calendarColors", JSON.stringify(next));
-        } catch {
-          const next: Record<string, string> = {};
-          for (const c of list) next[c.id] = c.backgroundColor || "#cbd5e1";
-          setCalendarColors(next);
-          localStorage.setItem("calendarColors", JSON.stringify(next));
         }
       })
       .catch(() => {
@@ -342,15 +380,28 @@ export default function HomePage() {
     setCreateCalendarId(primaryWritable || firstWritable || firstAny || "");
   }, [createOpen, calendars, writableCalendars, year]);
 
-  // Persist selection whenever it changes
+  // Persist preferences to server whenever they change
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        "selectedCalendarIds",
-        JSON.stringify(selectedCalendarIds)
-      );
-    } catch {}
-  }, [selectedCalendarIds]);
+    if (status === "authenticated" && preferencesLoaded.current) {
+      // Debounce API calls to avoid too many requests
+      const timeoutId = setTimeout(() => {
+        fetch("/api/preferences", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            selectedCalendarIds,
+            hiddenEventIds,
+            showDaysOfWeek,
+            showHidden,
+            calendarColors,
+          }),
+        }).catch((err) => {
+          console.error("Failed to save preferences:", err);
+        });
+      }, 500);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [status, selectedCalendarIds, hiddenEventIds, showDaysOfWeek, showHidden, calendarColors]);
 
   const onPrev = () => setYear((y) => y - 1);
   const onNext = () => setYear((y) => y + 1);
@@ -378,12 +429,6 @@ export default function HomePage() {
         allIds.includes(id)
       );
       setSelectedCalendarIds(mergedSelected);
-      try {
-        localStorage.setItem(
-          "selectedCalendarIds",
-          JSON.stringify(mergedSelected)
-        );
-      } catch {}
       // Merge default colors for any new calendars
       const nextColors: Record<string, string> = { ...calendarColors };
       for (const c of newCalendars) {
@@ -391,9 +436,6 @@ export default function HomePage() {
           nextColors[c.id] = c.backgroundColor || "#cbd5e1";
       }
       setCalendarColors(nextColors);
-      try {
-        localStorage.setItem("calendarColors", JSON.stringify(nextColors));
-      } catch {}
       // 2) Reload events for the current year using the merged selection
       const qs = `/api/events?year=${year}${
         mergedSelected.length
@@ -695,19 +737,66 @@ export default function HomePage() {
             role="dialog"
             aria-label="Menu"
           >
-            <div className="p-3 border-b flex items-center justify-between">
+            <div className="p-3 border-b flex items-center justify-between relative">
               <div className="font-semibold">Calendars</div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-[24px] leading-none"
-                aria-label="Refresh events"
-                title={isRefreshing ? "Refreshing…" : "Refresh events"}
-                onClick={onRefresh}
-                disabled={isRefreshing}
-              >
-                ⟳
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-[24px] leading-none"
+                  aria-label="Refresh events"
+                  title={isRefreshing ? "Refreshing…" : "Refresh events"}
+                  onClick={onRefresh}
+                  disabled={isRefreshing}
+                >
+                  ⟳
+                </Button>
+                {status === "authenticated" && (
+                  <div className="relative">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      aria-label="Settings"
+                      title="Settings"
+                      onClick={() => setSettingsDropdownOpen(!settingsDropdownOpen)}
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                    {settingsDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setSettingsDropdownOpen(false)}
+                          aria-hidden
+                        />
+                        <div className="absolute right-0 top-full mt-1 w-56 bg-card border rounded-md shadow-lg z-20 p-2 space-y-2">
+                          <label className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent p-2 rounded">
+                            <input
+                              type="checkbox"
+                              className="accent-foreground"
+                              checked={showDaysOfWeek}
+                              onChange={(e) => setShowDaysOfWeek(e.target.checked)}
+                            />
+                            <span>Show days of week</span>
+                          </label>
+                          {hiddenEventIds.length > 0 && (
+                            <label className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent p-2 rounded">
+                              <input
+                                type="checkbox"
+                                className="accent-foreground"
+                                checked={showHidden}
+                                onChange={(e) => setShowHidden(e.target.checked)}
+                              />
+                              <span>Show hidden events</span>
+                            </label>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
               {status === "authenticated" ? (
@@ -824,17 +913,6 @@ export default function HomePage() {
                   Sign in to manage calendars.
                 </div>
               )}
-              {status === "authenticated" && hiddenEventIds.length > 0 && (
-                <label className="px-2 pt-2 flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="accent-foreground"
-                    checked={showHidden}
-                    onChange={(e) => setShowHidden(e.target.checked)}
-                  />
-                  <span>Show hidden events</span>
-                </label>
-              )}
               {status === "authenticated" && calendars.length === 0 && (
                 <div className="text-sm text-muted-foreground p-2">
                   No calendars
@@ -908,11 +986,30 @@ export default function HomePage() {
           calendarColors={calendarColors}
           calendarNames={calendarNames}
           calendarAccounts={calendarAccounts}
+          writableCalendars={writableCalendars}
+          writableAccountsWithCalendars={writableAccountsWithCalendars}
+          showDaysOfWeek={showDaysOfWeek}
           onDayClick={(dateKey) => {
             if (status === "authenticated") {
               createDateFromDayClick.current = dateKey;
               setCreateOpen(true);
             }
+          }}
+          onUpdateEvent={async (event) => {
+            try {
+              await fetch("/api/events", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  id: event.id,
+                  title: event.title,
+                  calendarId: event.calendarId,
+                  startDate: event.startDate,
+                  endDate: event.endDate,
+                }),
+              });
+            } catch {}
+            await onRefresh();
           }}
           onDeleteEvent={async (id) => {
             try {
