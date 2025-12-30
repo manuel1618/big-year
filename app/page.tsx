@@ -43,7 +43,8 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
-  const [settingsDropdownOpen, setSettingsDropdownOpen] = useState<boolean>(false);
+  const [settingsDropdownOpen, setSettingsDropdownOpen] =
+    useState<boolean>(false);
   const [calendarColors, setCalendarColors] = useState<Record<string, string>>(
     {}
   );
@@ -69,13 +70,15 @@ export default function HomePage() {
   const writableAccountsWithCalendars = useMemo(() => {
     const writableSet = new Set(writableCalendars.map((c) => c.id));
     if (accounts.length > 0) {
-      return accounts.map((acc) => ({
-        accountId: acc.accountId,
-        email: acc.email || "Other",
-        list: writableCalendars.filter((c) =>
-          c.id.startsWith(`${acc.accountId}|`)
-        ),
-      })).filter((group) => group.list.length > 0);
+      return accounts
+        .map((acc) => ({
+          accountId: acc.accountId,
+          email: acc.email || "Other",
+          list: writableCalendars.filter((c) =>
+            c.id.startsWith(`${acc.accountId}|`)
+          ),
+        }))
+        .filter((group) => group.list.length > 0);
     }
     // Fallback grouping if accounts not provided
     const map = new Map<string, CalendarListItem[]>();
@@ -251,7 +254,7 @@ export default function HomePage() {
           typeof window !== "undefined" ? new URL(window.location.href) : null;
         const isLinkingReturn =
           !!url && url.searchParams.get("linkingAccount") === "1";
-        
+
         if (isLinkingReturn) {
           // Linking return: add calendars from new accounts
           let beforeIds: string[] = [];
@@ -271,7 +274,9 @@ export default function HomePage() {
           const newAccountIdSet = new Set(
             currentAccountIds.filter((id) => !beforeSet.has(id))
           );
-          const currentFiltered = selectedCalendarIds.filter((id) => allIds.includes(id));
+          const currentFiltered = selectedCalendarIds.filter((id) =>
+            allIds.includes(id)
+          );
           const toAdd = list
             .filter((c) => {
               const accId = c.id.includes("|") ? c.id.split("|")[0] : "";
@@ -290,8 +295,10 @@ export default function HomePage() {
           }
         } else {
           // Normal load: filter invalid calendars and add new account calendars
-          const validCurrent = selectedCalendarIds.filter((id) => allIds.includes(id));
-          
+          const validCurrent = selectedCalendarIds.filter((id) =>
+            allIds.includes(id)
+          );
+
           // Check for new accounts
           const currentAccIds = new Set(
             validCurrent
@@ -306,7 +313,7 @@ export default function HomePage() {
             )
           );
           const newAccIds = allAccIds.filter((id) => !currentAccIds.has(id));
-          
+
           if (preferencesLoaded.current) {
             // Preferences loaded - filter invalid and add new accounts
             if (newAccIds.length > 0) {
@@ -317,14 +324,18 @@ export default function HomePage() {
                 })
                 .map((c) => c.id);
               const merged = Array.from(new Set([...validCurrent, ...toAdd]));
-              if (merged.length !== selectedCalendarIds.length || 
-                  !merged.every(id => selectedCalendarIds.includes(id))) {
+              if (
+                merged.length !== selectedCalendarIds.length ||
+                !merged.every((id) => selectedCalendarIds.includes(id))
+              ) {
                 setSelectedCalendarIds(merged);
               }
             } else {
               // Just filter invalid calendars
-              if (validCurrent.length !== selectedCalendarIds.length ||
-                  !validCurrent.every(id => selectedCalendarIds.includes(id))) {
+              if (
+                validCurrent.length !== selectedCalendarIds.length ||
+                !validCurrent.every((id) => selectedCalendarIds.includes(id))
+              ) {
                 setSelectedCalendarIds(validCurrent);
               }
             }
@@ -333,7 +344,7 @@ export default function HomePage() {
             setSelectedCalendarIds(allIds);
           }
         }
-        
+
         // Update calendar colors (merge with existing, add defaults for new calendars)
         const next: Record<string, string> = { ...calendarColors };
         for (const c of list) {
@@ -401,7 +412,14 @@ export default function HomePage() {
       }, 500);
       return () => clearTimeout(timeoutId);
     }
-  }, [status, selectedCalendarIds, hiddenEventIds, showDaysOfWeek, showHidden, calendarColors]);
+  }, [
+    status,
+    selectedCalendarIds,
+    hiddenEventIds,
+    showDaysOfWeek,
+    showHidden,
+    calendarColors,
+  ]);
 
   const onPrev = () => setYear((y) => y - 1);
   const onNext = () => setYear((y) => y + 1);
@@ -513,13 +531,14 @@ export default function HomePage() {
 
   return (
     <div className="h-screen w-screen flex flex-col">
-      <div className="grid grid-cols-3 items-center p-3 border-b">
+      <div className="grid grid-cols-3 items-center p-3">
         <div className="flex items-center gap-2">
           <Button
-            variant="secondary"
+            variant="ghost"
             aria-label="Open menu"
             onClick={() => setSidebarOpen(true)}
             disabled={status !== "authenticated"}
+            className="text-2xl p-2 hover:bg-transparent"
           >
             ☰
           </Button>
@@ -549,8 +568,8 @@ export default function HomePage() {
         </div>
         <div className="flex items-center justify-end gap-2">
           <Button
-            variant="secondary"
-            className="gap-2"
+            variant="outline"
+            className="gap-2 rounded-full justify-center"
             onClick={() => setCreateOpen(true)}
             disabled={status !== "authenticated"}
             aria-label="Create event"
@@ -671,29 +690,31 @@ export default function HomePage() {
                     onChange={(e) => setCreateCalendarId(e.target.value)}
                     disabled={createSubmitting}
                   >
-                    {writableCalendars.length > 0 ? (
-                      writableAccountsWithCalendars.map(
-                        ({ accountId, email, list }) => (
-                          <optgroup
-                            key={accountId || email}
-                            label={email && email.length ? email : accountId || "Account"}
-                          >
-                            {list.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.summary}
-                              </option>
-                            ))}
-                          </optgroup>
+                    {writableCalendars.length > 0
+                      ? writableAccountsWithCalendars.map(
+                          ({ accountId, email, list }) => (
+                            <optgroup
+                              key={accountId || email}
+                              label={
+                                email && email.length
+                                  ? email
+                                  : accountId || "Account"
+                              }
+                            >
+                              {list.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.summary}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )
                         )
-                      )
-                    ) : (
-                      calendars.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {(c.accountEmail ? `${c.accountEmail} — ` : "") +
-                            c.summary}
-                        </option>
-                      ))
-                    )}
+                      : calendars.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {(c.accountEmail ? `${c.accountEmail} — ` : "") +
+                              c.summary}
+                          </option>
+                        ))}
                   </select>
                   {writableCalendars.length === 0 && calendars.length > 0 && (
                     <div className="text-xs text-muted-foreground">
@@ -743,23 +764,25 @@ export default function HomePage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-[24px] leading-none"
+                  className="h-5 w-5 text-muted-foreground hover:text-foreground flex items-center justify-center"
                   aria-label="Refresh events"
                   title={isRefreshing ? "Refreshing…" : "Refresh events"}
                   onClick={onRefresh}
                   disabled={isRefreshing}
                 >
-                  ⟳
+                  <RefreshCcw className="h-4 w-4" />
                 </Button>
                 {status === "authenticated" && (
-                  <div className="relative">
+                  <div className="relative flex items-center">
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-5 w-5 text-muted-foreground hover:text-foreground flex items-center justify-center"
                       aria-label="Settings"
                       title="Settings"
-                      onClick={() => setSettingsDropdownOpen(!settingsDropdownOpen)}
+                      onClick={() =>
+                        setSettingsDropdownOpen(!settingsDropdownOpen)
+                      }
                     >
                       <Settings className="h-4 w-4" />
                     </Button>
@@ -776,7 +799,9 @@ export default function HomePage() {
                               type="checkbox"
                               className="accent-foreground"
                               checked={showDaysOfWeek}
-                              onChange={(e) => setShowDaysOfWeek(e.target.checked)}
+                              onChange={(e) =>
+                                setShowDaysOfWeek(e.target.checked)
+                              }
                             />
                             <span>Show days of week</span>
                           </label>
@@ -786,7 +811,9 @@ export default function HomePage() {
                                 type="checkbox"
                                 className="accent-foreground"
                                 checked={showHidden}
-                                onChange={(e) => setShowHidden(e.target.checked)}
+                                onChange={(e) =>
+                                  setShowHidden(e.target.checked)
+                                }
                               />
                               <span>Show hidden events</span>
                             </label>
@@ -818,43 +845,6 @@ export default function HomePage() {
                           }}
                         >
                           <Unlink className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {true && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                          aria-label={`Reconnect ${email}`}
-                          title={`Reconnect ${email}`}
-                          onClick={() => {
-                            try {
-                              const existing = Array.from(
-                                new Set(accounts.map((a) => a.accountId))
-                              ).filter(Boolean);
-                              localStorage.setItem(
-                                "preLinkAccountIds",
-                                JSON.stringify(existing)
-                              );
-                            } catch {}
-                            import("next-auth/react").then(({ signIn }) => {
-                              const href = window.location.href;
-                              const hasQuery = href.includes("?");
-                              const callbackUrl = `${href}${
-                                hasQuery ? "&" : "?"
-                              }linkingAccount=1`;
-                              // Force consent and target this account by email so we (re)obtain a refresh_token
-                              const providerParams: Record<string, string> = {
-                                prompt: "consent",
-                                access_type: "offline",
-                              };
-                              if (email && email.includes("@"))
-                                providerParams.login_hint = email;
-                              signIn("google", { callbackUrl }, providerParams);
-                            });
-                          }}
-                        >
-                          <RefreshCcw className="h-4 w-4" />
                         </Button>
                       )}
                     </div>
@@ -921,9 +911,8 @@ export default function HomePage() {
               {status === "authenticated" && (
                 <div className="px-2 py-3">
                   <Button
-                    variant="secondary"
-                    size="sm"
-                    className="w-full justify-center gap-2"
+                    variant="outline"
+                    className="w-full justify-center gap-2 rounded-full"
                     onClick={() => {
                       // Persist existing accountIds so we can auto-add the new account's calendars after linking
                       try {
@@ -954,7 +943,7 @@ export default function HomePage() {
             <div className="p-3 border-t">
               {status === "authenticated" ? (
                 <Button
-                  className="w-full"
+                  className="w-full justify-center gap-2 rounded-full"
                   variant="outline"
                   onClick={() => {
                     setSidebarOpen(false);
