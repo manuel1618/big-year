@@ -129,6 +129,7 @@ export function YearCalendar({
   calendarAccounts = {},
   onHideEvent,
   onDeleteEvent,
+  onDayClick,
 }: {
   year: number;
   events: AllDayEvent[];
@@ -138,6 +139,7 @@ export function YearCalendar({
   calendarAccounts?: Record<string, string>;
   onHideEvent?: (id: string) => void;
   onDeleteEvent?: (id: string) => Promise<void> | void;
+  onDayClick?: (dateKey: string) => void;
 }) {
   const todayKey = formatDateKey(new Date());
   const dateMap = useMemo(() => expandEventsToDateMap(events), [events]);
@@ -278,9 +280,15 @@ export function YearCalendar({
                   "relative bg-background p-1 min-w-0 min-h-0 overflow-hidden",
                   isWeekend &&
                     'bg-white before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none',
-                  isToday && "ring-2 ring-primary"
+                  isToday && "ring-2 ring-primary",
+                  onDayClick && "cursor-pointer"
                 )}
                 title={date.toDateString()}
+                onClick={(e) => {
+                  // Event bars are in a separate overlay with pointer-events-auto,
+                  // so clicks on them won't reach here. Only clicks on empty day areas will.
+                  onDayClick?.(key);
+                }}
               >
                 {isFirstOfMonth && (
                   <div className="absolute top-1 left-1 text-[10px] leading-none uppercase tracking-wide text-primary">
@@ -383,6 +391,7 @@ export function YearCalendar({
                     }}
                     className="px-1 pointer-events-auto"
                     onClick={(e) => {
+                      e.stopPropagation();
                       const rect = (
                         e.currentTarget as HTMLDivElement
                       ).getBoundingClientRect();
@@ -507,10 +516,13 @@ export function YearCalendar({
             <div className="text-sm text-muted-foreground mb-4">
               Only all-day events will appear once you sign in.
             </div>
-            <Button onClick={() => {
-              const callbackUrl = typeof window !== "undefined" ? window.location.href : "/";
-              signIn("google", { callbackUrl });
-            }}>
+            <Button
+              onClick={() => {
+                const callbackUrl =
+                  typeof window !== "undefined" ? window.location.href : "/";
+                signIn("google", { callbackUrl });
+              }}
+            >
               Sign in with Google
             </Button>
           </div>

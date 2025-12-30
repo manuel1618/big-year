@@ -1,9 +1,15 @@
-'use client';
+"use client";
 import { useSession, signIn, signOut } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { YearCalendar, AllDayEvent } from "@/components/year-calendar";
-import { ChevronLeft, ChevronRight, Unlink, Plus, RefreshCcw } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Unlink,
+  Plus,
+  RefreshCcw,
+} from "lucide-react";
 
 type CalendarListItem = {
   id: string;
@@ -36,7 +42,9 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
-  const [calendarColors, setCalendarColors] = useState<Record<string, string>>({});
+  const [calendarColors, setCalendarColors] = useState<Record<string, string>>(
+    {}
+  );
   const [hiddenEventIds, setHiddenEventIds] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState<boolean>(false);
   const [createOpen, setCreateOpen] = useState<boolean>(false);
@@ -47,9 +55,12 @@ export default function HomePage() {
   const [createCalendarId, setCreateCalendarId] = useState<string>("");
   const [createSubmitting, setCreateSubmitting] = useState<boolean>(false);
   const [createError, setCreateError] = useState<string>("");
+  const createDateFromDayClick = useRef<string | null>(null);
   const writableCalendars = useMemo(() => {
     const canWrite = new Set(["owner", "writer"]);
-    return calendars.filter((c) => (c.accessRole ? canWrite.has(c.accessRole) : false));
+    return calendars.filter((c) =>
+      c.accessRole ? canWrite.has(c.accessRole) : false
+    );
   }, [calendars]);
   const accountsWithCalendars = useMemo(() => {
     if (accounts.length > 0) {
@@ -118,7 +129,9 @@ export default function HomePage() {
     }
     const controller = new AbortController();
     const qs = `/api/events?year=${year}${
-      selectedCalendarIds.length ? `&calendarIds=${encodeURIComponent(selectedCalendarIds.join(","))}` : ""
+      selectedCalendarIds.length
+        ? `&calendarIds=${encodeURIComponent(selectedCalendarIds.join(","))}`
+        : ""
     }`;
     fetch(qs, { cache: "no-store", signal: controller.signal })
       .then((res) => res.json())
@@ -139,7 +152,9 @@ export default function HomePage() {
     if (status !== "authenticated") {
       setCalendars([]);
       setSelectedCalendarIds([]);
-      try { localStorage.removeItem("selectedCalendarIds"); } catch {}
+      try {
+        localStorage.removeItem("selectedCalendarIds");
+      } catch {}
       return;
     }
     fetch(`/api/calendars`, { cache: "no-store" })
@@ -169,21 +184,33 @@ export default function HomePage() {
         const allIds = list.map((c) => c.id);
         let prev: string[] = [];
         try {
-          prev = JSON.parse(localStorage.getItem("selectedCalendarIds") || "[]") || [];
+          prev =
+            JSON.parse(localStorage.getItem("selectedCalendarIds") || "[]") ||
+            [];
         } catch {}
-        const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
-        const isLinkingReturn = !!url && url.searchParams.get("linkingAccount") === "1";
+        const url =
+          typeof window !== "undefined" ? new URL(window.location.href) : null;
+        const isLinkingReturn =
+          !!url && url.searchParams.get("linkingAccount") === "1";
         if (isLinkingReturn) {
           // Determine which accountIds are new compared to pre-link snapshot
           let beforeIds: string[] = [];
           try {
-            beforeIds = JSON.parse(localStorage.getItem("preLinkAccountIds") || "[]") || [];
+            beforeIds =
+              JSON.parse(localStorage.getItem("preLinkAccountIds") || "[]") ||
+              [];
           } catch {}
           const beforeSet = new Set(beforeIds);
           const currentAccountIds = Array.from(
-            new Set(list.map((c) => (c.id.includes("|") ? c.id.split("|")[0] : "")).filter(Boolean))
+            new Set(
+              list
+                .map((c) => (c.id.includes("|") ? c.id.split("|")[0] : ""))
+                .filter(Boolean)
+            )
           );
-          const newAccountIdSet = new Set(currentAccountIds.filter((id) => !beforeSet.has(id)));
+          const newAccountIdSet = new Set(
+            currentAccountIds.filter((id) => !beforeSet.has(id))
+          );
           const prevFiltered = prev.filter((id) => allIds.includes(id));
           const toAdd = list
             .filter((c) => {
@@ -194,7 +221,9 @@ export default function HomePage() {
           const merged = Array.from(new Set([...prevFiltered, ...toAdd]));
           setSelectedCalendarIds(merged);
           // Cleanup flag and snapshot
-          try { localStorage.removeItem("preLinkAccountIds"); } catch {}
+          try {
+            localStorage.removeItem("preLinkAccountIds");
+          } catch {}
           if (url) {
             url.searchParams.delete("linkingAccount");
             history.replaceState({}, "", url.toString());
@@ -231,7 +260,9 @@ export default function HomePage() {
         }
         // Load colors from localStorage, default to API backgroundColor or a soft palette
         try {
-          const stored = JSON.parse(localStorage.getItem("calendarColors") || "{}");
+          const stored = JSON.parse(
+            localStorage.getItem("calendarColors") || "{}"
+          );
           const next: Record<string, string> = { ...(stored || {}) };
           for (const c of list) {
             if (!next[c.id]) {
@@ -255,14 +286,26 @@ export default function HomePage() {
   }, [status]);
 
   useEffect(() => {
-    if (!createOpen) return;
+    if (!createOpen) {
+      // Clear date when dialog closes so it doesn't persist
+      setCreateStartDate("");
+      createDateFromDayClick.current = null;
+      return;
+    }
     setCreateError("");
     setCreateTitle("");
     setCreateHasEndDate(false);
     setCreateEndDate("");
-    const now = new Date();
-    const defaultDate = now.getFullYear() === year ? now : new Date(year, 0, 1);
-    setCreateStartDate(isoDateOnlyFromDate(defaultDate));
+    // Use date from day click if available, otherwise use default
+    if (createDateFromDayClick.current) {
+      setCreateStartDate(createDateFromDayClick.current);
+      createDateFromDayClick.current = null;
+    } else {
+      const now = new Date();
+      const defaultDate =
+        now.getFullYear() === year ? now : new Date(year, 0, 1);
+      setCreateStartDate(isoDateOnlyFromDate(defaultDate));
+    }
     // Prefer a writable primary calendar; else first writable; else first overall.
     const primaryWritable = writableCalendars.find((c) => c.primary)?.id;
     const firstWritable = writableCalendars[0]?.id;
@@ -273,7 +316,10 @@ export default function HomePage() {
   // Persist selection whenever it changes
   useEffect(() => {
     try {
-      localStorage.setItem("selectedCalendarIds", JSON.stringify(selectedCalendarIds));
+      localStorage.setItem(
+        "selectedCalendarIds",
+        JSON.stringify(selectedCalendarIds)
+      );
     } catch {}
   }, [selectedCalendarIds]);
 
@@ -299,22 +345,32 @@ export default function HomePage() {
       setCalendars(newCalendars);
       // Keep existing selection; don't auto-select new calendars
       const allIds = newCalendars.map((c) => c.id);
-      const mergedSelected = selectedCalendarIds.filter((id) => allIds.includes(id));
+      const mergedSelected = selectedCalendarIds.filter((id) =>
+        allIds.includes(id)
+      );
       setSelectedCalendarIds(mergedSelected);
       try {
-        localStorage.setItem("selectedCalendarIds", JSON.stringify(mergedSelected));
+        localStorage.setItem(
+          "selectedCalendarIds",
+          JSON.stringify(mergedSelected)
+        );
       } catch {}
       // Merge default colors for any new calendars
       const nextColors: Record<string, string> = { ...calendarColors };
       for (const c of newCalendars) {
-        if (!nextColors[c.id]) nextColors[c.id] = c.backgroundColor || "#cbd5e1";
+        if (!nextColors[c.id])
+          nextColors[c.id] = c.backgroundColor || "#cbd5e1";
       }
       setCalendarColors(nextColors);
       try {
         localStorage.setItem("calendarColors", JSON.stringify(nextColors));
       } catch {}
       // 2) Reload events for the current year using the merged selection
-      const qs = `/api/events?year=${year}${mergedSelected.length ? `&calendarIds=${encodeURIComponent(mergedSelected.join(","))}` : ""}`;
+      const qs = `/api/events?year=${year}${
+        mergedSelected.length
+          ? `&calendarIds=${encodeURIComponent(mergedSelected.join(","))}`
+          : ""
+      }`;
       const eventsRes = await fetch(qs, { cache: "no-store" });
       const eventsData = await eventsRes.json();
       setEvents(eventsData.events || []);
@@ -364,7 +420,9 @@ export default function HomePage() {
         body: JSON.stringify({
           title: createTitle.trim(),
           startDate: createStartDate,
-          endDate: createHasEndDate ? (createEndDate || createStartDate) : undefined,
+          endDate: createHasEndDate
+            ? createEndDate || createStartDate
+            : undefined,
           calendarId: createCalendarId,
         }),
       });
@@ -386,9 +444,9 @@ export default function HomePage() {
     <div className="h-screen w-screen flex flex-col">
       <div className="grid grid-cols-3 items-center p-3 border-b">
         <div className="flex items-center gap-2">
-          <Button 
-            variant="secondary" 
-            aria-label="Open menu" 
+          <Button
+            variant="secondary"
+            aria-label="Open menu"
             onClick={() => setSidebarOpen(true)}
             disabled={status !== "authenticated"}
           >
@@ -396,11 +454,25 @@ export default function HomePage() {
           </Button>
         </div>
         <div className="flex items-center justify-center gap-2">
-          <Button variant="ghost" size="icon" className="hover:bg-transparent" onClick={onPrev} aria-label="Previous year">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hover:bg-transparent"
+            onClick={onPrev}
+            aria-label="Previous year"
+          >
             <ChevronLeft className="h-5 w-5" />
           </Button>
-          <div className="font-semibold text-lg min-w-[5ch] text-center leading-none">{year}</div>
-          <Button variant="ghost" size="icon" className="hover:bg-transparent" onClick={onNext} aria-label="Next year">
+          <div className="font-semibold text-lg min-w-[5ch] text-center leading-none">
+            {year}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hover:bg-transparent"
+            onClick={onNext}
+            aria-label="Next year"
+          >
             <ChevronRight className="h-5 w-5" />
           </Button>
         </div>
@@ -411,7 +483,11 @@ export default function HomePage() {
             onClick={() => setCreateOpen(true)}
             disabled={status !== "authenticated"}
             aria-label="Create event"
-            title={status === "authenticated" ? "Create event" : "Sign in to create events"}
+            title={
+              status === "authenticated"
+                ? "Create event"
+                : "Sign in to create events"
+            }
           >
             <Plus className="h-4 w-4" />
             <span>Create event</span>
@@ -437,7 +513,9 @@ export default function HomePage() {
                   variant="ghost"
                   size="icon"
                   className="text-[22px] leading-none"
-                  onClick={() => (createSubmitting ? null : setCreateOpen(false))}
+                  onClick={() =>
+                    createSubmitting ? null : setCreateOpen(false)
+                  }
                   aria-label="Close"
                   disabled={createSubmitting}
                 >
@@ -465,13 +543,20 @@ export default function HomePage() {
                     onChange={(e) => {
                       const v = e.target.value;
                       setCreateStartDate(v);
-                      if (createHasEndDate && createEndDate && v && createEndDate < v) {
+                      if (
+                        createHasEndDate &&
+                        createEndDate &&
+                        v &&
+                        createEndDate < v
+                      ) {
                         setCreateEndDate(v);
                       }
                     }}
                     disabled={createSubmitting}
                   />
-                  <div className="text-xs text-muted-foreground">Defaults to all-day.</div>
+                  <div className="text-xs text-muted-foreground">
+                    Defaults to all-day.
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm">
@@ -481,7 +566,8 @@ export default function HomePage() {
                       onChange={(e) => {
                         const on = e.target.checked;
                         setCreateHasEndDate(on);
-                        if (on && !createEndDate) setCreateEndDate(createStartDate);
+                        if (on && !createEndDate)
+                          setCreateEndDate(createStartDate);
                         if (!on) setCreateEndDate("");
                       }}
                       disabled={createSubmitting}
@@ -500,7 +586,8 @@ export default function HomePage() {
                         disabled={createSubmitting}
                       />
                       <div className="text-xs text-muted-foreground">
-                        End date is inclusive (we’ll convert it correctly for Google Calendar).
+                        End date is inclusive (we’ll convert it correctly for
+                        Google Calendar).
                       </div>
                     </div>
                   )}
@@ -513,15 +600,20 @@ export default function HomePage() {
                     onChange={(e) => setCreateCalendarId(e.target.value)}
                     disabled={createSubmitting}
                   >
-                    {(writableCalendars.length ? writableCalendars : calendars).map((c) => (
+                    {(writableCalendars.length
+                      ? writableCalendars
+                      : calendars
+                    ).map((c) => (
                       <option key={c.id} value={c.id}>
-                        {(c.accountEmail ? `${c.accountEmail} — ` : "") + c.summary}
+                        {(c.accountEmail ? `${c.accountEmail} — ` : "") +
+                          c.summary}
                       </option>
                     ))}
                   </select>
                   {writableCalendars.length === 0 && calendars.length > 0 && (
                     <div className="text-xs text-muted-foreground">
-                      No writable calendars found; creating may fail on read-only calendars.
+                      No writable calendars found; creating may fail on
+                      read-only calendars.
                     </div>
                   )}
                 </div>
@@ -537,7 +629,10 @@ export default function HomePage() {
                 >
                   Cancel
                 </Button>
-                <Button onClick={onCreateEvent} disabled={createSubmitting || status !== "authenticated"}>
+                <Button
+                  onClick={onCreateEvent}
+                  disabled={createSubmitting || status !== "authenticated"}
+                >
                   {createSubmitting ? "Creating…" : "Create"}
                 </Button>
               </div>
@@ -577,7 +672,7 @@ export default function HomePage() {
                   <div key={accountId || email} className="space-y-1">
                     <div className="px-2 pt-3 pb-1 flex items-center justify-between">
                       <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        {(email && email.length ? email : (accountId || "Account"))}
+                        {email && email.length ? email : accountId || "Account"}
                       </div>
                       {true && (
                         <Button
@@ -602,16 +697,27 @@ export default function HomePage() {
                           title={`Reconnect ${email}`}
                           onClick={() => {
                             try {
-                              const existing = Array.from(new Set(accounts.map((a) => a.accountId))).filter(Boolean);
-                              localStorage.setItem("preLinkAccountIds", JSON.stringify(existing));
+                              const existing = Array.from(
+                                new Set(accounts.map((a) => a.accountId))
+                              ).filter(Boolean);
+                              localStorage.setItem(
+                                "preLinkAccountIds",
+                                JSON.stringify(existing)
+                              );
                             } catch {}
                             import("next-auth/react").then(({ signIn }) => {
                               const href = window.location.href;
                               const hasQuery = href.includes("?");
-                              const callbackUrl = `${href}${hasQuery ? "&" : "?"}linkingAccount=1`;
+                              const callbackUrl = `${href}${
+                                hasQuery ? "&" : "?"
+                              }linkingAccount=1`;
                               // Force consent and target this account by email so we (re)obtain a refresh_token
-                              const providerParams: Record<string, string> = { prompt: "consent", access_type: "offline" };
-                              if (email && email.includes("@")) providerParams.login_hint = email;
+                              const providerParams: Record<string, string> = {
+                                prompt: "consent",
+                                access_type: "offline",
+                              };
+                              if (email && email.includes("@"))
+                                providerParams.login_hint = email;
                               signIn("google", { callbackUrl }, providerParams);
                             });
                           }}
@@ -623,27 +729,42 @@ export default function HomePage() {
                     {list.map((c) => {
                       const checked = selectedCalendarIds.includes(c.id);
                       return (
-                        <div key={c.id} className="flex items-center gap-2 text-sm p-2 rounded hover:bg-accent">
+                        <div
+                          key={c.id}
+                          className="flex items-center gap-2 text-sm p-2 rounded hover:bg-accent"
+                        >
                           <input
                             type="checkbox"
                             className="accent-foreground"
                             checked={checked}
                             onChange={(e) => {
                               setSelectedCalendarIds((prev) =>
-                                e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id)
+                                e.target.checked
+                                  ? [...prev, c.id]
+                                  : prev.filter((id) => id !== c.id)
                               );
                             }}
                           />
                           <span className="truncate flex-1">{c.summary}</span>
-                          {c.primary && <span className="text-[10px] text-muted-foreground">primary</span>}
+                          {c.primary && (
+                            <span className="text-[10px] text-muted-foreground">
+                              primary
+                            </span>
+                          )}
                           <input
                             type="color"
                             value={calendarColors[c.id] || "#cbd5e1"}
                             onChange={(e) => {
-                              const next = { ...calendarColors, [c.id]: e.target.value };
+                              const next = {
+                                ...calendarColors,
+                                [c.id]: e.target.value,
+                              };
                               setCalendarColors(next);
                               try {
-                                localStorage.setItem("calendarColors", JSON.stringify(next));
+                                localStorage.setItem(
+                                  "calendarColors",
+                                  JSON.stringify(next)
+                                );
                               } catch {}
                             }}
                             className="h-5 w-5 rounded border p-0"
@@ -656,7 +777,9 @@ export default function HomePage() {
                   </div>
                 ))
               ) : (
-                <div className="text-sm text-muted-foreground p-2">Sign in to manage calendars.</div>
+                <div className="text-sm text-muted-foreground p-2">
+                  Sign in to manage calendars.
+                </div>
               )}
               {status === "authenticated" && hiddenEventIds.length > 0 && (
                 <label className="px-2 pt-2 flex items-center gap-2 text-sm">
@@ -670,7 +793,9 @@ export default function HomePage() {
                 </label>
               )}
               {status === "authenticated" && calendars.length === 0 && (
-                <div className="text-sm text-muted-foreground p-2">No calendars</div>
+                <div className="text-sm text-muted-foreground p-2">
+                  No calendars
+                </div>
               )}
               {status === "authenticated" && (
                 <div className="px-2 py-3">
@@ -681,13 +806,20 @@ export default function HomePage() {
                     onClick={() => {
                       // Persist existing accountIds so we can auto-add the new account's calendars after linking
                       try {
-                        const existing = Array.from(new Set(accounts.map((a) => a.accountId))).filter(Boolean);
-                        localStorage.setItem("preLinkAccountIds", JSON.stringify(existing));
+                        const existing = Array.from(
+                          new Set(accounts.map((a) => a.accountId))
+                        ).filter(Boolean);
+                        localStorage.setItem(
+                          "preLinkAccountIds",
+                          JSON.stringify(existing)
+                        );
                       } catch {}
                       import("next-auth/react").then(({ signIn }) => {
                         const href = window.location.href;
                         const hasQuery = href.includes("?");
-                        const callbackUrl = `${href}${hasQuery ? "&" : "?"}linkingAccount=1`;
+                        const callbackUrl = `${href}${
+                          hasQuery ? "&" : "?"
+                        }linkingAccount=1`;
                         signIn("google", { callbackUrl });
                       });
                     }}
@@ -700,11 +832,24 @@ export default function HomePage() {
             </div>
             <div className="p-3 border-t">
               {status === "authenticated" ? (
-                <Button className="w-full" variant="outline" onClick={() => { setSidebarOpen(false); signOut(); }}>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => {
+                    setSidebarOpen(false);
+                    signOut();
+                  }}
+                >
                   Sign out
                 </Button>
               ) : (
-                <Button className="w-full" onClick={() => { setSidebarOpen(false); signIn("google"); }}>
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    setSidebarOpen(false);
+                    signIn("google");
+                  }}
+                >
                   Sign in with Google
                 </Button>
               )}
@@ -720,6 +865,12 @@ export default function HomePage() {
           calendarColors={calendarColors}
           calendarNames={calendarNames}
           calendarAccounts={calendarAccounts}
+          onDayClick={(dateKey) => {
+            if (status === "authenticated") {
+              createDateFromDayClick.current = dateKey;
+              setCreateOpen(true);
+            }
+          }}
           onDeleteEvent={async (id) => {
             try {
               await fetch("/api/events", {
@@ -740,5 +891,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-
