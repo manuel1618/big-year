@@ -118,6 +118,59 @@ For complete removal of warnings and a verified badge:
 
 **Important**: The privacy policy and terms pages are already created at `/privacy` and `/terms`. Make sure your app is deployed so these URLs are accessible before submitting for verification.
 
+## Fixing Google Cloud Console Security Alerts
+
+If you see security alerts in Google Cloud Console's "Project Checkup", here's how to fix them:
+
+### 1. Use Secure Flows (PKCE)
+
+NextAuth automatically uses PKCE for secure OAuth flows. To ensure it's working correctly:
+
+1. Go to [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Click on your OAuth 2.0 Client ID ("Big Year Calendar")
+3. Verify **Application type** is set to "Web application" (not "Desktop app" or "Other")
+4. Ensure **Authorized redirect URIs** are properly configured with HTTPS URLs
+5. Save any changes
+
+**Note**: If the alert persists, it may take 24-48 hours for Google's systems to recognize the secure flow configuration.
+
+### 2. Incremental Authorization
+
+To enable incremental authorization support:
+
+1. Go to [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Click on your OAuth 2.0 Client ID
+3. Look for **Advanced settings** or scroll down to find configuration options
+4. Some OAuth clients automatically support incremental authorization when configured as "Web application" type
+5. If there's an explicit option to enable it, turn it on
+
+**Alternative**: If incremental authorization isn't available or applicable (since this app needs all scopes from the start), you can:
+- Click "Learn how to fix it" in the Project Checkup alert for specific guidance
+- The alert may be informational rather than critical if your app legitimately needs all scopes upfront
+
+### 3. Cross-Account Protection
+
+To enable Cross-Account Protection:
+
+1. Go to [APIs & Services → OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent)
+2. Scroll down to find **Advanced settings** or look for **Security** section
+3. Enable **Cross-Account Protection**
+4. This feature helps prevent unauthorized access when users have multiple Google accounts
+5. Save the changes
+
+**Note**: Cross-Account Protection is a security feature that Google recommends for production apps.
+
+### 4. Verify Configuration
+
+After making these changes:
+
+1. Wait 24-48 hours for changes to propagate through Google's systems
+2. Go back to [Project Checkup](https://console.cloud.google.com/apis/security/checkup)
+3. Refresh the page to see updated status
+4. Some alerts may require additional configuration or may be informational
+
+**Important**: The "Send token securely" and "WebViews usage" alerts showing green checkmarks indicate those security measures are already correctly configured.
+
 ## Notes
 
 - Only all-day events are fetched: events with `start.date` (not `start.dateTime`) are included.
