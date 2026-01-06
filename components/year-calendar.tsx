@@ -168,6 +168,76 @@ const monthShort = [
 
 const dayOfWeekShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
+function getMonthColor(month: number): string {
+  // Northern hemisphere seasonal colors - very distinct, Apple-like
+  // Winter (Dec, Jan, Feb): Cool blue tones
+  // Spring (Mar, Apr, May): Fresh green/yellow tones
+  // Summer (Jun, Jul, Aug): Warm red/orange tones
+  // Fall (Sep, Oct, Nov): Warm orange/brown tones
+  
+  const colors: Record<number, string> = {
+    0: "rgba(70, 130, 255, 0.2)",   // Jan - Deep sky blue (winter)
+    1: "rgba(176, 224, 230, 0.2)",  // Feb - Powder blue (winter)
+    2: "rgba(50, 205, 50, 0.2)",    // Mar - Lime green (spring)
+    3: "rgba(144, 238, 144, 0.2)",  // Apr - Light green (spring)
+    4: "rgba(255, 255, 100, 0.2)",  // May - Bright yellow (spring)
+    5: "rgba(255, 180, 120, 0.2)",  // Jun - Peach/orange (summer)
+    6: "rgba(255, 105, 135, 0.2)",  // Jul - Hot pink/coral (summer)
+    7: "rgba(255, 140, 80, 0.2)",   // Aug - Orange-red (summer)
+    8: "rgba(255, 200, 100, 0.2)",  // Sep - Golden orange (fall)
+    9: "rgba(255, 165, 0, 0.2)",    // Oct - Orange (fall)
+    10: "rgba(210, 140, 70, 0.2)",  // Nov - Burnt sienna (fall)
+    11: "rgba(100, 150, 200, 0.2)", // Dec - Slate blue (winter)
+  };
+  
+  return colors[month] || "transparent";
+}
+
+function getTextColorForBackground(bgColor: string | undefined): string {
+  if (!bgColor) {
+    return "rgba(0, 0, 0, 0.85)";
+  }
+  
+  // Extract RGB values from various color formats
+  let r = 0, g = 0, b = 0;
+  
+  // Handle hex colors
+  if (bgColor.startsWith("#")) {
+    try {
+      let h = bgColor.replace("#", "").trim();
+      if (h.length === 3) {
+        h = h.split("").map((c) => c + c).join("");
+      }
+      r = parseInt(h.slice(0, 2), 16);
+      g = parseInt(h.slice(2, 4), 16);
+      b = parseInt(h.slice(4, 6), 16);
+    } catch {
+      return "rgba(0, 0, 0, 0.85)";
+    }
+  }
+  // Handle rgba colors
+  else if (bgColor.startsWith("rgba")) {
+    const match = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+      r = parseInt(match[1], 10);
+      g = parseInt(match[2], 10);
+      b = parseInt(match[3], 10);
+    }
+  }
+  // Handle hsl colors (approximate conversion)
+  else if (bgColor.startsWith("hsl")) {
+    // For HSL, use a default - could be improved with proper HSL to RGB conversion
+    return "rgba(0, 0, 0, 0.85)";
+  }
+  
+  // Calculate relative luminance (perceived brightness)
+  // Using the formula: 0.299*R + 0.587*G + 0.114*B
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  
+  // Use dark text on light backgrounds, light text on dark backgrounds
+  return luminance > 0.5 ? "rgba(0, 0, 0, 0.85)" : "rgba(255, 255, 255, 0.95)";
+}
+
 function hexToRgba(hex: string, alpha = 0.35) {
   try {
     let h = hex.replace("#", "").trim();
@@ -551,7 +621,8 @@ export function YearCalendar({
     const isFirstOfMonth = day.date.getDate() === 1;
     const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
     const dayOfWeek = day.date.getDay();
-    const showWeekdayLabel = (view === "default" && showDaysOfWeek) || view === "months" || view === "weeks";
+    const showWeekdayLabel = showDaysOfWeek;
+    const monthColor = getMonthColor(day.date.getMonth());
     
     return (
       <div
@@ -560,9 +631,12 @@ export function YearCalendar({
         className={cn(
           "relative bg-background p-1 min-w-0 min-h-0 overflow-hidden",
           isWeekend &&
-            'bg-white before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none',
+            'before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none before:z-0',
           isToday && "ring-1 ring-primary"
         )}
+        style={{ 
+          backgroundColor: monthColor,
+        }}
         title={day.date.toDateString()}
         onClick={(e) => {
           onDayClick?.(day.key);
@@ -906,7 +980,7 @@ export function YearCalendar({
                       className="truncate rounded-sm px-1 text-[10px] leading-[14px] shadow-sm"
                       style={{
                         backgroundColor: bg || "hsl(var(--secondary))",
-                        color: "#ffffff",
+                        color: getTextColorForBackground(bg),
                         height: laneHeight - 2,
                         lineHeight: `${laneHeight - 4}px`,
                       }}

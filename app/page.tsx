@@ -221,7 +221,6 @@ export default function HomePage() {
   // Load preferences from server when authenticated
   useEffect(() => {
     if (status === "authenticated" && !preferencesLoaded.current) {
-      preferencesLoaded.current = true;
       fetch("/api/preferences")
         .then((res) => res.json())
         .then((data) => {
@@ -240,6 +239,8 @@ export default function HomePage() {
           if (data.calendarColors !== undefined) {
             setCalendarColors(data.calendarColors);
           }
+          // Mark as loaded only after data is set
+          preferencesLoaded.current = true;
         })
         .catch((err) => {
           console.error("Failed to load preferences:", err);
@@ -249,6 +250,26 @@ export default function HomePage() {
       preferencesLoaded.current = false;
     }
   }, [status]);
+
+  // Re-apply calendar selection when preferences finish loading and calendars are already loaded
+  useEffect(() => {
+    if (
+      status === "authenticated" &&
+      preferencesLoaded.current &&
+      calendars.length > 0 &&
+      selectedCalendarIds.length > 0
+    ) {
+      // Filter out invalid calendar IDs and ensure selection is valid
+      const allIds = calendars.map((c) => c.id);
+      const validSelection = selectedCalendarIds.filter((id) =>
+        allIds.includes(id)
+      );
+      // Only update if there's a difference (some calendars were removed)
+      if (validSelection.length !== selectedCalendarIds.length) {
+        setSelectedCalendarIds(validSelection);
+      }
+    }
+  }, [status, calendars, selectedCalendarIds]);
 
   const visibleEvents = useMemo(() => {
     if (showHidden) return events;
