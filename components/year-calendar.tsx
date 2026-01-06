@@ -56,6 +56,70 @@ function generateYearDays(year: number) {
   return days;
 }
 
+function groupDaysByMonth(
+  days: Array<{ key: string; date: Date }>
+): Array<{ month: number; days: Array<{ key: string; date: Date }> }> {
+  const groups: Array<{ month: number; days: Array<{ key: string; date: Date }> }> = [];
+  let currentMonth = -1;
+  let currentGroup: Array<{ key: string; date: Date }> = [];
+
+  for (const day of days) {
+    const month = day.date.getMonth();
+    if (month !== currentMonth) {
+      if (currentGroup.length > 0) {
+        groups.push({ month: currentMonth, days: currentGroup });
+      }
+      currentMonth = month;
+      currentGroup = [day];
+    } else {
+      currentGroup.push(day);
+    }
+  }
+  if (currentGroup.length > 0) {
+    groups.push({ month: currentMonth, days: currentGroup });
+  }
+  return groups;
+}
+
+function groupDaysByWeek(
+  days: Array<{ key: string; date: Date }>
+): Array<{ weekNum: number; days: Array<{ key: string; date: Date }> }> {
+  const groups: Array<{ weekNum: number; days: Array<{ key: string; date: Date }> }> = [];
+  let weekNum = 1;
+  let currentWeek: Array<{ key: string; date: Date }> = [];
+  let foundFirstWeek = false;
+
+  for (const day of days) {
+    const dayOfWeek = day.date.getDay(); // 0 = Sunday, 6 = Saturday
+    const isSunday = dayOfWeek === 0;
+
+    if (isSunday) {
+      // Start a new week on Sunday
+      if (currentWeek.length > 0) {
+        groups.push({ weekNum, days: currentWeek });
+        weekNum++;
+      }
+      currentWeek = [day];
+      foundFirstWeek = true;
+    } else {
+      // If we haven't found the first Sunday yet, check if this is Jan 1st
+      if (!foundFirstWeek && day.date.getMonth() === 0 && day.date.getDate() === 1) {
+        // Jan 1st is not a Sunday, so this is the first week
+        currentWeek = [day];
+        foundFirstWeek = true;
+      } else {
+        currentWeek.push(day);
+      }
+    }
+  }
+
+  if (currentWeek.length > 0) {
+    groups.push({ weekNum, days: currentWeek });
+  }
+
+  return groups;
+}
+
 function computeSquareGridColumns(
   totalDays: number,
   width: number,
@@ -138,6 +202,7 @@ export function YearCalendar({
   writableCalendars = [],
   writableAccountsWithCalendars = [],
   showDaysOfWeek = false,
+  view = "default",
 }: {
   year: number;
   events: AllDayEvent[];
@@ -162,6 +227,7 @@ export function YearCalendar({
     list: CalendarListItem[];
   }>;
   showDaysOfWeek?: boolean;
+  view?: "default" | "months" | "weeks";
 }) {
   const todayKey = formatDateKey(new Date());
   const dateMap = useMemo(() => expandEventsToDateMap(events), [events]);
@@ -171,6 +237,10 @@ export function YearCalendar({
     days.forEach((d, i) => map.set(d.key, i));
     return map;
   }, [days]);
+
+  // Group days by view type
+  const monthsGroups = useMemo(() => groupDaysByMonth(days), [days]);
+  const weeksGroups = useMemo(() => groupDaysByWeek(days), [days]);
   const gridRef = React.useRef<HTMLDivElement | null>(null);
   const [cellSizePx, setCellSizePx] = React.useState<{ w: number; h: number }>({
     w: 0,
@@ -203,22 +273,154 @@ export function YearCalendar({
     cols: 12,
     cell: 12,
   }));
+  
+  // Calculate dynamic row heights based on events
+  const rowHeightsMap = useMemo(() => {
+    if (!cellSizePx.h || events.length === 0) return new Map<number, number>();
+    
+    const labelOffset = 16;
+    const laneHeight = 16;
+    const baseCellHeight = gridDims.cell;
+    
+    // Create day to position map
+    const dayToPosition = new Map<string, { row: number; col: number }>();
+    if (view === "default") {
+      const cols = gridDims.cols || 12;
+      days.forEach((day, idx) => {
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
+        dayToPosition.set(day.key, { row, col });
+      });
+    } else if (view === "months") {
+      let row = 0;
+      monthsGroups.forEach((group) => {
+        group.days.forEach((day, idx) => {
+          dayToPosition.set(day.key, { row, col: idx });
+        });
+        row++;
+      });
+    } else if (view === "weeks") {
+      let row = 0;
+      weeksGroups.forEach((group) => {
+        group.days.forEach((day, idx) => {
+          dayToPosition.set(day.key, { row, col: idx });
+        });
+        row++;
+      });
+    }
+    
+    // Calculate events per row
+    const rowToSegs = new Map<number, Array<{ startCol: number; endCol: number }>>();
+    for (const ev of events) {
+      const startPos = dayToPosition.get(ev.startDate);
+      if (!startPos) continue;
+      const endDate = new Date(ev.endDate + "T00:00:00Z");
+      endDate.setUTCDate(endDate.getUTCDate() - 1);
+      const endDateKey = formatDateKey(endDate);
+      const endPosInclusive = dayToPosition.get(endDateKey);
+      if (!endPosInclusive) continue;
+      
+      let currentRow = startPos.row;
+      const endRow = endPosInclusive.row;
+      const endCol = endPosInclusive.col;
+      
+      while (currentRow <= endRow) {
+        let rowEndCol: number;
+        if (view === "weeks") {
+          rowEndCol = currentRow === endRow ? endCol : 6;
+        } else if (view === "months") {
+          const monthGroup = monthsGroups[currentRow];
+          rowEndCol = currentRow === endRow ? endCol : (monthGroup ? monthGroup.days.length - 1 : 30);
+        } else {
+          rowEndCol = currentRow === endRow ? endCol : gridDims.cols - 1;
+        }
+        const startCol = currentRow === startPos.row ? startPos.col : 0;
+        const list = rowToSegs.get(currentRow) ?? [];
+        list.push({ startCol, endCol: rowEndCol + 1 });
+        rowToSegs.set(currentRow, list);
+        currentRow++;
+      }
+    }
+    
+    // Calculate max lanes per row
+    const maxLanesPerRow = new Map<number, number>();
+    for (const [row, segs] of rowToSegs) {
+      segs.sort((a, b) => a.startCol - b.startCol);
+      const laneEnds: number[] = [];
+      let maxLanesInRow = 0;
+      for (const seg of segs) {
+        let lane = 0;
+        while (lane < laneEnds.length && seg.startCol < laneEnds[lane]) {
+          lane++;
+        }
+        maxLanesInRow = Math.max(maxLanesInRow, lane + 1);
+        if (lane === laneEnds.length) laneEnds.push(seg.endCol);
+        else laneEnds[lane] = seg.endCol;
+      }
+      maxLanesPerRow.set(row, Math.max(1, maxLanesInRow));
+    }
+    
+    // Calculate row heights
+    const heights = new Map<number, number>();
+    for (const [row, maxLanes] of maxLanesPerRow) {
+      const requiredHeight = labelOffset + maxLanes * laneHeight + 2;
+      heights.set(row, Math.max(baseCellHeight, requiredHeight));
+    }
+    
+    return heights;
+  }, [events, days, monthsGroups, weeksGroups, gridDims, cellSizePx.h, view]);
+  
+  // Update grid template rows
+  React.useLayoutEffect(() => {
+    if (!gridRef.current) return;
+    const totalRows = view === "default" 
+      ? Math.ceil(days.length / (gridDims.cols || 12))
+      : view === "months" 
+        ? monthsGroups.length 
+        : weeksGroups.length;
+    
+    const baseCellHeight = gridDims.cell;
+    const rowHeights = Array.from({ length: totalRows }, (_, i) => {
+      const height = rowHeightsMap.get(i) || baseCellHeight;
+      return `${height}px`;
+    }).join(' ');
+    
+    gridRef.current.style.gridTemplateRows = rowHeights;
+  }, [rowHeightsMap, gridDims.cell, days.length, monthsGroups.length, weeksGroups.length, gridDims.cols, view]);
 
   React.useEffect(() => {
     function onResize() {
-      setGridDims(
-        computeSquareGridColumns(
-          days.length,
-          window.innerWidth,
-          window.innerHeight
-        )
-      );
+      if (view === "default") {
+        setGridDims(
+          computeSquareGridColumns(
+            days.length,
+            window.innerWidth,
+            window.innerHeight
+          )
+        );
+      } else if (view === "months") {
+        // For months view, always use 31 columns (max days in a month)
+        const availableWidth = window.innerWidth - 50; // Reserve space for index column
+        // Calculate width but use a fixed reasonable height
+        const cellWidth = Math.floor((availableWidth - 30) / 31); // 30 gaps between 31 cells
+        // Use a fixed reasonable height for months (not square)
+        const cellHeight = 50; // Fixed height that works well for month rows
+        setGridDims({ cols: 31, cell: cellHeight });
+      } else if (view === "weeks") {
+        // For weeks view, always 7 columns (one per day)
+        const availableWidth = window.innerWidth - 50; // Reserve space for index column
+        // Calculate width but use a fixed reasonable height
+        const cellWidth = Math.floor((availableWidth - 6) / 7); // 6 gaps between 7 cells
+        // Use a fixed reasonable height for weeks (not square, can be smaller)
+        const cellHeight = 40; // Fixed height that works well for week rows
+        setGridDims({ cols: 7, cell: cellHeight });
+      }
     }
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [days.length]);
-  React.useLayoutEffect(() => {
+  }, [days.length, view, monthsGroups, weeksGroups]);
+  const updateCellSize = React.useCallback(() => {
     const grid = gridRef.current;
     if (!grid) return;
     const firstCell = grid.querySelector<HTMLElement>('[data-day-cell="1"]');
@@ -228,7 +430,24 @@ export function YearCalendar({
         setCellSizePx({ w: rect.width, h: rect.height });
       }
     }
-  }, [gridDims.cols, gridDims.cell, year]);
+  }, []);
+
+  React.useLayoutEffect(() => {
+    updateCellSize();
+  }, [gridDims.cols, gridDims.cell, year, updateCellSize]);
+
+  // Update cell size on window resize (with RAF to ensure DOM has updated)
+  React.useEffect(() => {
+    function onResize() {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          updateCellSize();
+        });
+      });
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateCellSize]);
   React.useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       if (!popover.event) return;
@@ -327,81 +546,213 @@ export function YearCalendar({
     return `${left} – ${right}`;
   }
 
+  const renderDayCell = (day: { key: string; date: Date }, indexInGroup?: number) => {
+    const isToday = day.key === todayKey;
+    const isFirstOfMonth = day.date.getDate() === 1;
+    const isWeekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+    const dayOfWeek = day.date.getDay();
+    const showWeekdayLabel = (view === "default" && showDaysOfWeek) || view === "months" || view === "weeks";
+    
+    return (
+      <div
+        key={day.key}
+        data-day-cell="1"
+        className={cn(
+          "relative bg-background p-1 min-w-0 min-h-0 overflow-hidden",
+          isWeekend &&
+            'bg-white before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none',
+          isToday && "ring-1 ring-primary"
+        )}
+        title={day.date.toDateString()}
+        onClick={(e) => {
+          onDayClick?.(day.key);
+        }}
+      >
+        {isFirstOfMonth && view === "default" && (
+          <div className="absolute top-1 left-1 text-[10px] leading-none uppercase tracking-wide text-primary">
+            {monthShort[day.date.getMonth()]}
+            {showDaysOfWeek && (
+              <span className="text-[10px] opacity-60">
+                {dayOfWeekShort[dayOfWeek]}
+              </span>
+            )}
+          </div>
+        )}
+        <div
+          className={cn(
+            "mb-0.5 text-[10px] leading-none text-muted-foreground",
+            isToday && "text-primary font-semibold",
+            isFirstOfMonth && showDaysOfWeek && view === "default" && "ml-11",
+            isFirstOfMonth && !showDaysOfWeek && view === "default" && "ml-6",
+            (view === "months" || view === "weeks") && "flex items-center gap-1"
+          )}
+        >
+          {showWeekdayLabel && (
+            <span className="text-[10px] opacity-60">
+              {dayOfWeekShort[dayOfWeek]}
+            </span>
+          )}
+          {day.date.getDate()}
+        </div>
+      </div>
+    );
+  };
+
+  const renderIndexCell = (index: number | string) => {
+    return (
+      <div
+        key={`index-${index}`}
+        className="bg-muted/30 flex items-center justify-center text-xs font-medium text-muted-foreground border-r border-border sticky left-0 z-10"
+      >
+        {index}
+      </div>
+    );
+  };
+
+  const getGridTemplateColumns = () => {
+    if (view === "default") {
+      return `repeat(${gridDims.cols}, 1fr)`;
+    } else {
+      return `50px repeat(${gridDims.cols}, 1fr)`;
+    }
+  };
+
+  const renderWeekdayHeader = () => {
+    if (view === "default") return null;
+    if (view === "weeks") {
+      return (
+        <>
+          <div className="bg-muted/30 border-r border-border sticky left-0 z-10" />
+          {dayOfWeekShort.map((day, idx) => (
+            <div
+              key={`header-${idx}`}
+              className="bg-muted/30 flex items-center justify-center text-[10px] font-medium text-muted-foreground border-b border-border py-1 sticky top-0 z-10"
+            >
+              {day}
+            </div>
+          ))}
+        </>
+      );
+    }
+    // For months view, show day numbers 1-31
+    if (view === "months") {
+      return (
+        <>
+          <div className="bg-muted/30 border-r border-border sticky left-0 z-10" />
+          {Array.from({ length: 31 }, (_, i) => i + 1).map((dayNum) => (
+            <div
+              key={`header-day-${dayNum}`}
+              className="bg-muted/30 flex items-center justify-center text-[10px] font-medium text-muted-foreground border-b border-border py-1 sticky top-0 z-10"
+            >
+              {dayNum}
+            </div>
+          ))}
+        </>
+      );
+    }
+    return null;
+  };
+
+  const headerRowHeight = view !== "default" ? 30 : 0;
+
   return (
     <div className="h-full w-full overflow-hidden">
-      <div className="relative h-full w-full">
+      <div className="relative h-full w-full flex flex-col">
+        {(view === "weeks" || view === "months") && (
+          <div
+            className="grid bg-border p-px flex-shrink-0 sticky top-0 z-20"
+            style={{
+              gridTemplateColumns: getGridTemplateColumns(),
+              gridTemplateRows: "auto",
+              gap: "1px",
+            }}
+          >
+            {renderWeekdayHeader()}
+          </div>
+        )}
         <div
-          ref={gridRef}
-          className="grid h-full w-full bg-border p-px"
-          suppressHydrationWarning
-          style={{
-            gridTemplateColumns: `repeat(${gridDims.cols}, 1fr)`,
-            gridAutoRows: `${gridDims.cell}px`,
-            gap: "1px",
-          }}
+          className={cn(
+            "relative",
+            view === "default" ? "flex-1 min-h-0" : "flex-1 min-h-0 overflow-auto"
+          )}
         >
-          {days.map(({ key, date }) => {
-            const isToday = key === todayKey;
-            const dayEvents = dateMap.get(key) || [];
-            const isFirstOfMonth = date.getDate() === 1;
-            const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-            return (
-              <div
-                key={key}
-                data-day-cell="1"
-                className={cn(
-                  "relative bg-background p-1 min-w-0 min-h-0 overflow-hidden",
-                  isWeekend &&
-                    'bg-white before:content-[""] before:absolute before:inset-0 before:bg-[rgba(0,0,0,0.02)] before:pointer-events-none',
-                  isToday && "ring-1 ring-primary"
-                )}
-                title={date.toDateString()}
-                onClick={(e) => {
-                  // Event bars are in a separate overlay with pointer-events-auto,
-                  // so clicks on them won't reach here. Only clicks on empty day areas will.
-                  onDayClick?.(key);
-                }}
-              >
-                {isFirstOfMonth && (
-                  <div className="absolute top-1 left-1 text-[10px] leading-none uppercase tracking-wide text-primary">
-                    {monthShort[date.getMonth()]}
-                    {showDaysOfWeek && (
-                      <span className="text-[10px] opacity-60">
-                        {dayOfWeekShort[date.getDay()]}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "mb-0.5 text-[10px] leading-none text-muted-foreground",
-                    isToday && "text-primary font-semibold",
-                    isFirstOfMonth && showDaysOfWeek && "ml-11",
-                    isFirstOfMonth && !showDaysOfWeek && "ml-6"
-                  )}
-                >
-                  {!isFirstOfMonth && showDaysOfWeek && (
-                    <span className="text-[10px] opacity-60 mr-0.5">
-                      {dayOfWeekShort[date.getDay()]}
-                    </span>
-                  )}
-                  {date.getDate()}
-                </div>
-                {/* Event chips removed; events are rendered as spanning bars below */}
-              </div>
-            );
-          })}
-        </div>
-        {/* Absolute overlay using pixel positioning to perfectly align with day cells */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ padding: 1 }}
-        >
+          <div className="relative w-full">
+            <div
+              ref={gridRef}
+              className="grid bg-border p-px w-full"
+              suppressHydrationWarning
+              style={{
+                gridTemplateColumns: getGridTemplateColumns(),
+                gridAutoRows: `${gridDims.cell}px`,
+                gap: "1px",
+              }}
+            >
+          {view === "default" &&
+            days.map((day) => renderDayCell(day))}
+          
+          {view === "months" &&
+            monthsGroups.map((group, groupIdx) => (
+              <React.Fragment key={`month-${group.month}`}>
+                {renderIndexCell(monthShort[group.month])}
+                {group.days.map((day) => renderDayCell(day))}
+                {/* Fill remaining cells in the row if month is shorter than 31 days */}
+                {Array.from({ length: Math.max(0, 31 - group.days.length) }).map((_, i) => (
+                  <div key={`empty-${groupIdx}-${i}`} className="bg-background" />
+                ))}
+              </React.Fragment>
+            ))}
+          
+          {view === "weeks" &&
+            weeksGroups.map((group, groupIdx) => (
+              <React.Fragment key={`week-${group.weekNum}`}>
+                {renderIndexCell(group.weekNum)}
+                {group.days.map((day) => renderDayCell(day))}
+                {/* Fill remaining cells if week is shorter than 7 days (can happen at year boundaries) */}
+                {Array.from({ length: Math.max(0, 7 - group.days.length) }).map((_, i) => (
+                  <div key={`empty-week-${groupIdx}-${i}`} className="bg-background" />
+                ))}
+              </React.Fragment>
+            ))}
+            </div>
+            {/* Absolute overlay using pixel positioning to perfectly align with day cells */}
+            <div
+              className="pointer-events-none absolute inset-0 w-full h-full"
+              style={{ padding: 1 }}
+            >
           {React.useMemo(() => {
-            const cols = gridDims.cols || 12;
             const gap = 1; // matches gap-px
             const pad = 0; // already accounted by wrapper padding style above
-            if (!cols || !cellSizePx.w || !cellSizePx.h) return null;
+            if (!cellSizePx.w || !cellSizePx.h) return null;
+            
+            // Create a map from day key to its position in the grid
+            const dayToPosition = new Map<string, { row: number; col: number }>();
+            
+            if (view === "default") {
+              const cols = gridDims.cols || 12;
+              days.forEach((day, idx) => {
+                const row = Math.floor(idx / cols);
+                const col = idx % cols;
+                dayToPosition.set(day.key, { row, col });
+              });
+            } else if (view === "months") {
+              const cols = gridDims.cols || 31;
+              let row = 0;
+              monthsGroups.forEach((group) => {
+                group.days.forEach((day, idx) => {
+                  dayToPosition.set(day.key, { row, col: idx }); // col is 0-based, index column is separate
+                });
+                row++;
+              });
+            } else if (view === "weeks") {
+              let row = 0;
+              weeksGroups.forEach((group) => {
+                group.days.forEach((day, idx) => {
+                  dayToPosition.set(day.key, { row, col: idx }); // col is 0-based, index column is separate
+                });
+                row++;
+              });
+            }
+            
             type Seg = {
               row: number;
               startCol: number;
@@ -409,33 +760,101 @@ export function YearCalendar({
               ev: AllDayEvent;
             };
             const rowToSegs = new Map<number, Seg[]>();
+            
             for (const ev of events) {
-              const startIdx = dayIndexByKey.get(ev.startDate);
-              const endIdxExclusive = dayIndexByKey.get(ev.endDate);
-              if (startIdx == null || endIdxExclusive == null) continue;
-              let segStart = startIdx;
-              while (segStart < endIdxExclusive) {
-                const row = Math.floor(segStart / cols);
-                const rowEndExclusive = Math.min(
-                  endIdxExclusive,
-                  (row + 1) * cols
-                );
-                const startCol = segStart % cols; // 0-based inclusive
-                const endCol =
-                  rowEndExclusive % cols === 0 ? cols : rowEndExclusive % cols; // 1..cols inclusive
-                const list = rowToSegs.get(row) ?? [];
-                list.push({ row, startCol, endCol, ev });
-                rowToSegs.set(row, list);
-                segStart = rowEndExclusive;
+              const startPos = dayToPosition.get(ev.startDate);
+              const endPos = dayToPosition.get(ev.endDate);
+              if (!startPos) continue;
+              
+              // For end date, we need to find the position of the day before (since endDate is exclusive)
+              const endDate = new Date(ev.endDate + "T00:00:00Z");
+              endDate.setUTCDate(endDate.getUTCDate() - 1);
+              const endDateKey = formatDateKey(endDate);
+              const endPosInclusive = dayToPosition.get(endDateKey);
+              
+              if (!endPosInclusive) continue;
+              
+              // Handle events that span multiple rows
+              let currentRow = startPos.row;
+              const endRow = endPosInclusive.row;
+              const endCol = endPosInclusive.col;
+              
+              while (currentRow <= endRow) {
+                let rowEndCol: number;
+                if (view === "weeks") {
+                  rowEndCol = currentRow === endRow ? endCol : 6; // 7 days = 0-6
+                } else if (view === "months") {
+                  // Find the last day in this month row
+                  const monthGroup = monthsGroups[currentRow];
+                  const maxColInMonth = monthGroup ? monthGroup.days.length - 1 : 30; // 31 days = 0-30
+                  rowEndCol = currentRow === endRow ? endCol : maxColInMonth;
+                } else {
+                  rowEndCol = currentRow === endRow ? endCol : gridDims.cols - 1;
+                }
+                const startCol = currentRow === startPos.row ? startPos.col : 0;
+                const list = rowToSegs.get(currentRow) ?? [];
+                list.push({ row: currentRow, startCol, endCol: rowEndCol + 1, ev });
+                rowToSegs.set(currentRow, list);
+                currentRow++;
               }
             }
+            
             const bars: Array<React.ReactElement> = [];
             const labelOffset = 16;
             const laneHeight = 16;
-            const maxLanes = Math.max(
-              1,
-              Math.floor((cellSizePx.h - labelOffset - 2) / laneHeight)
-            );
+            const indexColWidth = view !== "default" ? 50 : 0;
+            
+            // Calculate max lanes needed per row to ensure all events fit
+            const maxLanesPerRow = new Map<number, number>();
+            for (const [row, segs] of rowToSegs) {
+              segs.sort((a, b) => a.startCol - b.startCol);
+              const laneEnds: number[] = [];
+              let maxLanesInRow = 0;
+              for (const seg of segs) {
+                let lane = 0;
+                while (
+                  lane < laneEnds.length &&
+                  seg.startCol < laneEnds[lane]
+                ) {
+                  lane++;
+                }
+                maxLanesInRow = Math.max(maxLanesInRow, lane + 1);
+                if (lane === laneEnds.length) laneEnds.push(seg.endCol);
+                else laneEnds[lane] = seg.endCol;
+              }
+              maxLanesPerRow.set(row, Math.max(1, maxLanesInRow));
+            }
+            
+            // Calculate row heights based on max lanes needed
+            const rowHeights = new Map<number, number>();
+            const baseCellHeight = gridDims.cell;
+            for (const [row, maxLanes] of maxLanesPerRow) {
+              const requiredHeight = labelOffset + maxLanes * laneHeight + 2;
+              rowHeights.set(row, Math.max(baseCellHeight, requiredHeight));
+            }
+            
+            // Store row heights for grid template
+            const totalRows = view === "default" 
+              ? Math.ceil(days.length / (gridDims.cols || 12))
+              : view === "months" 
+                ? monthsGroups.length 
+                : weeksGroups.length;
+            
+            // Generate grid template rows
+            const gridTemplateRows = Array.from({ length: totalRows }, (_, i) => {
+              const height = rowHeights.get(i) || baseCellHeight;
+              return `${height}px`;
+            }).join(' ');
+            
+            // Calculate cumulative row positions for accurate event positioning
+            const rowPositions = new Map<number, number>();
+            let cumulativeTop = pad;
+            for (let r = 0; r < totalRows; r++) {
+              rowPositions.set(r, cumulativeTop);
+              const height = rowHeights.get(r) || baseCellHeight;
+              cumulativeTop += height + gap;
+            }
+            
             for (const [row, segs] of rowToSegs) {
               segs.sort((a, b) => a.startCol - b.startCol);
               const laneEnds: number[] = [];
@@ -447,15 +866,13 @@ export function YearCalendar({
                 ) {
                   lane++;
                 }
-                if (lane >= maxLanes) continue;
+                // Always render - no skipping, rows will expand to fit
                 if (lane === laneEnds.length) laneEnds.push(seg.endCol);
                 else laneEnds[lane] = seg.endCol;
-                const left = pad + seg.startCol * (cellSizePx.w + gap);
-                const top =
-                  pad +
-                  row * (cellSizePx.h + gap) +
-                  labelOffset +
-                  lane * laneHeight;
+                
+                const rowTop = rowPositions.get(row) || 0;
+                const left = pad + indexColWidth + seg.startCol * (cellSizePx.w + gap);
+                const top = rowTop + labelOffset + lane * laneHeight;
                 const span = seg.endCol - seg.startCol;
                 const width = span * cellSizePx.w + (span - 1) * gap;
                 const key = `${seg.ev.id}:${row}:${seg.startCol}-${seg.endCol}:${lane}`;
@@ -507,7 +924,14 @@ export function YearCalendar({
             gridDims.cols,
             cellSizePx,
             calendarColors,
+            view,
+            days,
+            monthsGroups,
+            weeksGroups,
+            headerRowHeight,
           ])}
+            </div>
+          </div>
         </div>
       </div>
       {popover.event && isEditing && (

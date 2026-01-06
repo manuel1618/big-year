@@ -1,6 +1,7 @@
 "use client";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -50,6 +51,7 @@ export default function HomePage() {
   const [hiddenEventIds, setHiddenEventIds] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState<boolean>(false);
   const [showDaysOfWeek, setShowDaysOfWeek] = useState<boolean>(false);
+  const [view, setView] = useState<"default" | "months" | "weeks">("default");
   const [createOpen, setCreateOpen] = useState<boolean>(false);
   const [createTitle, setCreateTitle] = useState<string>("");
   const [createStartDate, setCreateStartDate] = useState<string>("");
@@ -553,28 +555,65 @@ export default function HomePage() {
             ☰
           </Button>
         </div>
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hover:bg-transparent"
-            onClick={onPrev}
-            aria-label="Previous year"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Button>
-          <div className="font-semibold text-lg min-w-[5ch] text-center leading-none">
-            {year}
+        <div className="flex items-center justify-center gap-2 flex-col">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hover:bg-transparent"
+              onClick={onPrev}
+              aria-label="Previous year"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <div className="font-semibold text-lg min-w-[5ch] text-center leading-none">
+              {year}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hover:bg-transparent"
+              onClick={onNext}
+              aria-label="Next year"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hover:bg-transparent"
-            onClick={onNext}
-            aria-label="Next year"
-          >
-            <ChevronRight className="h-5 w-5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant={view === "default" ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                "text-xs px-3 py-1 h-7",
+                view === "default" && "bg-primary text-primary-foreground"
+              )}
+              onClick={() => setView("default")}
+            >
+              Default
+            </Button>
+            <Button
+              variant={view === "months" ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                "text-xs px-3 py-1 h-7",
+                view === "months" && "bg-primary text-primary-foreground"
+              )}
+              onClick={() => setView("months")}
+            >
+              Months
+            </Button>
+            <Button
+              variant={view === "weeks" ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                "text-xs px-3 py-1 h-7",
+                view === "weeks" && "bg-primary text-primary-foreground"
+              )}
+              onClick={() => setView("weeks")}
+            >
+              Weeks
+            </Button>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-2">
           <Button
@@ -1025,6 +1064,7 @@ export default function HomePage() {
           writableCalendars={writableCalendars}
           writableAccountsWithCalendars={writableAccountsWithCalendars}
           showDaysOfWeek={showDaysOfWeek}
+          view={view}
           onDayClick={(dateKey) => {
             if (status === "authenticated") {
               createDateFromDayClick.current = dateKey;
